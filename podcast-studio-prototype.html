@@ -1,0 +1,1404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Podcast Studio · 产品原型</title>
+<style>
+  :root{
+    --bg:#0e1116; --bg2:#131822; --panel:#161c27; --panel2:#1b2331;
+    --line:#252e3d; --line2:#2c3648;
+    --txt:#e8edf4; --muted:#8b95a7; --dim:#5d687a;
+    --accent:#f59e0b; --accent2:#fbbf24;
+    --green:#34d399; --red:#f87171; --blue:#60a5fa; --amber:#fbbf24;
+    --shadow:0 8px 30px rgba(0,0,0,.35);
+    --radius:12px;
+    --mono:ui-monospace,"Cascadia Code",Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:radial-gradient(1200px 600px at 70% -10%, #1a2332 0%, var(--bg) 55%);
+    color:var(--txt); font-size:14px; min-height:100vh;
+  }
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:#2c3648;border-radius:6px}
+  a{color:inherit;text-decoration:none}
+
+  /* ===== 顶栏 ===== */
+  .topbar{
+    position:sticky;top:0;z-index:20;height:56px;
+    display:flex;align-items:center;gap:16px;padding:0 24px;
+    border-bottom:1px solid var(--line);
+    background:rgba(14,17,22,.82);backdrop-filter:blur(8px);
+  }
+  .inner{max-width:1120px;margin:0 auto;padding:0 8px}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px}
+  .logo .dot{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--accent),#ef4444);display:flex;align-items:center;justify-content:center}
+  .logo .dot svg{width:15px;height:15px;fill:#0e1116}
+  .crumb{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:13px;flex-wrap:wrap}
+  .crumb a:hover{color:var(--accent2)}
+  .crumb .cur{color:var(--txt);font-weight:600}
+  .crumb .sep{color:var(--dim)}
+  .spacer{flex:1}
+  .btn{
+    display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line2);
+    background:var(--panel);color:var(--txt);border-radius:9px;
+    padding:8px 14px;font-size:13px;cursor:pointer;transition:.15s;
+  }
+  .btn:hover{background:var(--panel2);border-color:#3a4660}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .btn.primary{background:linear-gradient(135deg,var(--accent),#ea8b0c);border-color:transparent;color:#14100a;font-weight:600}
+  .btn.primary:disabled{background:var(--panel);color:var(--dim);border:1px solid var(--line2)}
+  .btn.ghost{background:transparent;border-color:transparent;color:var(--muted)}
+  .btn.ghost:hover{background:var(--panel);color:var(--txt)}
+  .btn.lg{padding:11px 22px;font-size:14px}
+
+  /* ===== 单集子导航 ===== */
+  .epnav{
+    border-bottom:1px solid var(--line);background:rgba(19,24,34,.55);
+  }
+  .epnav .inner{display:flex;gap:4px;padding-top:0;padding-bottom:0}
+  .epnav a{
+    padding:13px 18px;font-size:13.5px;color:var(--muted);border-bottom:2px solid transparent;
+    display:flex;align-items:center;gap:7px;
+  }
+  .epnav a:hover{color:var(--txt)}
+  .epnav a.on{color:var(--txt);border-bottom-color:var(--accent);font-weight:600}
+  .epnav .badge{margin-left:6px;font-size:10.5px;background:var(--panel2);color:var(--dim);border-radius:99px;padding:1px 8px}
+
+  /* ===== 工作台 + AI 会话侧边栏（悬浮浮层） ===== */
+  .workbench{display:flex;height:calc(100vh - 103px);overflow:hidden}
+  .wb-main{flex:1;min-width:0;height:100%;overflow-y:auto}
+  .ai-sidebar{
+    width:376px;flex:none;
+    border-left:1px solid var(--line);background:var(--bg2);
+    display:flex;flex-direction:column;
+  }
+  .ai-head{display:flex;align-items:center;gap:9px;padding:14px 16px 10px;border-bottom:1px solid var(--line)}
+  .ai-head .ai-t{font-weight:700;font-size:14px}
+  .ai-head .ai-s{font-size:11px;color:var(--dim)}
+  .ai-type{display:flex;gap:6px;padding:10px 12px;border-bottom:1px solid var(--line)}
+  .ai-type button{flex:1;padding:7px 0;border:1px solid var(--line2);background:var(--panel);color:var(--muted);border-radius:8px;font-size:12.5px;cursor:pointer}
+  .ai-type button.on{background:var(--accent);color:#14100a;border-color:transparent;font-weight:600}
+  .msg-scroll{flex:1;overflow-y:auto;padding:14px 12px;display:flex;flex-direction:column;gap:10px;max-height:calc(100vh - 226px)}
+  .msg{max-width:87%;padding:9px 12px;border-radius:12px;font-size:13px;line-height:1.6}
+  .msg.ai{background:var(--panel);border:1px solid var(--line);align-self:flex-start;border-bottom-left-radius:4px}
+  .msg.me{background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.25);align-self:flex-end;border-bottom-right-radius:4px}
+  .msg .m-who{font-size:10.5px;color:var(--dim);margin-bottom:3px}
+  .msg .m-who.me{color:var(--accent2)}
+  .proposal{margin-top:8px;border:1px dashed rgba(245,158,11,.5);border-radius:8px;padding:9px;font-size:12px;background:rgba(245,158,11,.05)}
+  .proposal .p-t{font-family:var(--mono);color:var(--accent2);font-size:11px;margin-bottom:4px}
+  .proposal .p-acts{display:flex;gap:7px;margin-top:7px}
+  .proposal .p-acts button{flex:1;padding:5px 0;border-radius:7px;border:none;cursor:pointer;font-size:12px}
+  .proposal .p-ok{background:var(--green);color:#062a1b;font-weight:600}
+  .proposal .p-no{background:var(--panel2);color:var(--muted)}
+  .ai-input{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line)}
+  .ai-input textarea{flex:1;resize:none;background:var(--panel);border:1px solid var(--line2);border-radius:10px;color:var(--txt);padding:9px 12px;font-size:13px;font-family:inherit;outline:none;min-height:40px}
+  .ai-input textarea:focus{border-color:var(--accent)}
+  .ai-input button{background:var(--accent);border:none;border-radius:10px;color:#14100a;font-weight:700;padding:0 17px;cursor:pointer}
+  /* 说话人配置 */
+  .spk-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 12px;border:1px solid var(--line2);border-radius:99px;background:var(--panel);font-size:12.5px;color:var(--muted)}
+  .spk-chip .avatar{width:22px;height:22px;font-size:10px}
+  .cast-card{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:8px 20px}
+  .cast-row{display:flex;align-items:center;gap:13px;padding:12px 0;border-bottom:1px solid var(--line)}
+  .cast-row:last-child{border:none}
+  .cast-row .avatar{width:34px;height:34px;font-size:14px}
+  .cast-row .c-main{flex:1}
+  .cast-row .c-name{font-weight:650;font-size:13.5px}
+  .cast-row .c-voice{font-size:12px;color:var(--muted);margin-top:2px}
+  /* 确认弹层（定稿） */
+  .modal-backdrop{position:fixed;inset:0;background:rgba(8,10,14,.65);z-index:80;display:none;align-items:center;justify-content:center}
+  .modal-backdrop.show{display:flex}
+  .modal{width:min(460px,92vw);background:var(--panel2);border:1px solid var(--line2);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.55);padding:22px}
+  .modal-h{font-size:15px;font-weight:700;margin-bottom:12px;display:flex;align-items:center;gap:9px}
+  .modal .fx-status{font-size:13px;color:var(--muted);line-height:1.7;margin-bottom:16px}
+  .modal-acts{display:flex;justify-content:flex-end;gap:10px}
+
+  /* ===== 页面骨架 ===== */
+  .page{padding:36px 24px 80px}
+  .page .inner{max-width:1120px;margin:0 auto}
+  .page-head{margin-bottom:28px}
+  .page-head h1{font-size:26px;font-weight:750;letter-spacing:.2px}
+  .page-head .sub{color:var(--muted);font-size:13.5px;margin-top:7px;line-height:1.6}
+  .section-title{font-size:15px;font-weight:700;margin:34px 0 14px;display:flex;align-items:center;gap:10px}
+  .section-title .more{margin-left:auto;font-size:12.5px;color:var(--muted);font-weight:500;cursor:pointer}
+  .section-title .more:hover{color:var(--accent2)}
+
+  /* ===== 首页：工作间卡片墙 ===== */
+  .ws-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+  .ws-card{
+    border:1px solid var(--line);border-radius:16px;background:var(--panel);
+    padding:22px;cursor:pointer;transition:.18s;display:block;
+  }
+  .ws-card:hover{transform:translateY(-2px);border-color:var(--line2);box-shadow:var(--shadow)}
+  .ws-card .top{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .ws-card .ic{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px}
+  .ws-card .name{font-size:16px;font-weight:700}
+  .ws-card .desc{font-size:12px;color:var(--dim);margin-top:3px}
+  .ws-card .stats{display:flex;gap:8px;margin-top:14px}
+  .chip{font-size:11.5px;color:var(--muted);background:var(--panel2);border-radius:99px;padding:3px 11px}
+  .ws-card .go{margin-top:16px;font-size:12.5px;color:var(--accent2);display:flex;align-items:center;gap:6px}
+  .ws-card.new{border-style:dashed;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:170px;color:var(--dim)}
+  .ws-card.new:hover{color:var(--accent2);border-color:var(--accent)}
+  .ws-card.new .plus{font-size:28px;margin-bottom:8px}
+
+  /* ===== 工作间页 ===== */
+  .ws-hero{
+    border:1px solid var(--line);border-radius:16px;background:linear-gradient(135deg,var(--panel),var(--panel2));
+    padding:26px;display:flex;align-items:center;gap:18px;
+  }
+  .ws-hero .ic{width:56px;height:56px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:26px}
+  .ws-hero h2{font-size:22px;font-weight:750}
+  .ws-hero .desc{color:var(--muted);font-size:13px;margin-top:5px}
+  .ws-hero .acts{margin-left:auto;display:flex;gap:10px}
+  .note-card{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:20px}
+  .note-card .tags{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+  .tag{font-size:12px;background:var(--panel2);border:1px solid var(--line2);border-radius:99px;padding:4px 12px;color:var(--muted)}
+  .tag.hl{border-color:rgba(245,158,11,.4);color:var(--accent2)}
+  .ep-row{
+    display:flex;align-items:center;gap:14px;border:1px solid var(--line);border-radius:12px;
+    background:var(--panel);padding:16px 18px;margin-bottom:10px;cursor:pointer;transition:.15s;
+  }
+  .ep-row:hover{border-color:var(--line2);background:var(--panel2)}
+  .ep-row .e-ic{font-size:20px}
+  .ep-row .e-main{flex:1}
+  .ep-row .e-name{font-weight:650;font-size:14.5px}
+  .ep-row .e-meta{font-size:12px;color:var(--dim);margin-top:4px}
+  .ep-row .e-enter{color:var(--accent2);font-size:12.5px}
+
+  /* ===== 资源库页 ===== */
+  .toolbar{display:flex;align-items:center;gap:12px;margin-bottom:22px;flex-wrap:wrap}
+  .search{
+    flex:1;min-width:240px;display:flex;align-items:center;gap:9px;
+    border:1px solid var(--line2);border-radius:10px;background:var(--panel);padding:10px 14px;
+  }
+  .search input{flex:1;background:none;border:none;outline:none;color:var(--txt);font-size:13.5px}
+  .search .hint{font-size:11px;color:var(--dim);white-space:nowrap}
+  .res-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
+  .res-card{border:1px solid var(--line);border-radius:14px;background:var(--panel);overflow:hidden}
+  .res-card .head{display:flex;align-items:center;gap:11px;padding:16px 16px 12px;cursor:pointer}
+  .res-card .head:hover{background:var(--panel2)}
+  .res-card .r-ic{font-size:20px}
+  .res-card .r-name{font-weight:650;font-size:13.5px;flex:1;line-height:1.4}
+  .res-card .r-cnt{font-size:11px;color:var(--dim);background:var(--panel2);border-radius:99px;padding:2px 9px;font-family:var(--mono)}
+  .res-card .meta{display:flex;gap:8px;padding:0 16px 14px}
+  .res-card .meta .chip{background:var(--panel2)}
+  .chunks{border-top:1px solid var(--line);display:none}
+  .chunks.show{display:block}
+  .chunk-row{display:flex;gap:10px;padding:11px 16px;font-size:12.5px;color:var(--muted);line-height:1.6;border-bottom:1px solid var(--line)}
+  .chunk-row:last-child{border-bottom:none}
+  .chunk-row .idx{font-family:var(--mono);color:var(--accent);font-size:11px;flex:none;padding-top:2px}
+
+  /* ===== 会话页 ===== */
+  .sess-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+  .sess-card{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:20px}
+  .sess-card .s-top{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .sess-card .s-ic{font-size:20px}
+  .sess-card .s-name{font-weight:700;font-size:15px;flex:1}
+  .badge{font-size:11px;font-weight:700;border-radius:99px;padding:2px 10px}
+  .b-done{background:rgba(52,211,153,.14);color:var(--green)}
+  .b-live{background:rgba(251,191,36,.14);color:var(--amber)}
+  .b-lock{background:rgba(139,149,167,.14);color:var(--muted)}
+  .sess-card .s-body{font-size:13px;color:var(--muted);line-height:1.7}
+  .sess-card .kv{display:flex;gap:9px;margin-bottom:5px}
+  .sess-card .kv b{color:var(--txt);font-weight:600}
+  .sess-card .s-foot{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:11.5px;color:var(--dim);display:flex;gap:12px;flex-wrap:wrap}
+  .sess-card .chat{background:var(--panel2);border-radius:10px;padding:12px;font-size:12.5px;color:var(--muted);line-height:1.7;margin-top:8px}
+  .sess-card .chat .c-who{color:var(--accent2);font-weight:600;margin-right:6px}
+
+  /* ===== 脚本页 ===== */
+  .script-toolbar{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+  .tgroup{display:flex;align-items:center;gap:6px}
+  .tlabel{font-size:12.5px;color:var(--muted)}
+  .seg{display:flex;border:1px solid var(--line2);border-radius:8px;overflow:hidden}
+  .seg button{border:none;background:var(--panel);color:var(--muted);padding:7px 13px;font-size:12.5px;cursor:pointer}
+  .seg button.on{background:var(--accent);color:#14100a;font-weight:600}
+  .seg button:not(:last-child){border-right:1px solid var(--line2)}
+  .save-flag{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12.5px}
+  .pill{border:1px solid var(--line2);border-radius:99px;padding:2px 11px;font-size:11.5px}
+  .pill.dirty{border-color:var(--red);color:var(--red)}
+  .pill.saved{border-color:var(--green);color:var(--green)}
+
+  /* Auditor 检查报告横幅 */
+  .report-banner{
+    display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:11px 16px;
+    border:1px solid rgba(52,211,153,.35);border-radius:12px;background:rgba(52,211,153,.06);
+    font-size:12.5px;
+  }
+  .report-banner .rb-ic{font-size:15px}
+  .report-banner .rb-title{font-weight:700}
+  .report-banner .rb-sum{color:var(--muted);flex:1}
+  .report-banner .rb-x{cursor:pointer;color:var(--dim);padding:2px 7px;border-radius:6px}
+  .report-banner .rb-x:hover{background:var(--panel);color:var(--txt)}
+
+  .line-table{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--panel)}
+  .line-head,.line-row{display:grid;grid-template-columns:34px 58px 108px 1fr 120px}
+  .line-head{background:var(--panel2);border-bottom:1px solid var(--line);font-size:11px;color:var(--dim);font-weight:600;letter-spacing:.5px}
+  .line-head>div{padding:11px 12px}
+  .line-row{border-bottom:1px solid var(--line);transition:background .15s}
+  .line-row:last-child{border-bottom:none}
+  .line-row:hover{background:var(--panel2)}
+  .line-row.sel{background:rgba(245,158,11,.1);box-shadow:inset 2px 0 0 var(--accent)}
+  .line-row.playing{background:rgba(245,158,11,.16)}
+  /* 内联润色工具条（悬浮，独立于布局流，像代码编辑器的浮层） */
+  .rewrite-bar{
+    display:none;align-items:center;gap:10px;padding:12px 14px;
+    position:fixed;bottom:86px;left:50%;transform:translateX(-50%);width:min(580px,94vw);
+    border:1px solid rgba(245,158,11,.5);border-radius:12px;background:rgba(24,20,14,.97);
+    box-shadow:0 12px 40px rgba(0,0,0,.5);z-index:60;backdrop-filter:blur(6px);
+  }
+  .rewrite-bar.show{display:flex;flex-wrap:wrap}
+  .rewrite-bar .rb-tag{font-size:12px;color:var(--accent2);font-weight:600;white-space:nowrap}
+  .rewrite-bar input{
+    flex:1;min-width:220px;background:var(--panel);border:1px solid var(--line2);border-radius:8px;
+    color:var(--txt);padding:8px 12px;font-size:13px;outline:none;
+  }
+  .rewrite-bar input:focus{border-color:var(--accent)}
+  .rewrite-bar .rb-acts{display:flex;gap:7px;white-space:nowrap}
+  .rewrite-bar .rb-ok{background:var(--accent);border:none;border-radius:8px;color:#14100a;font-weight:700;padding:8px 14px;cursor:pointer;font-size:12.5px}
+  .rewrite-bar .rb-x{background:var(--panel2);border:1px solid var(--line2);border-radius:8px;color:var(--muted);padding:8px 12px;cursor:pointer;font-size:12.5px}
+  .rewrite-bar .rb-undo{background:var(--panel2);border:1px solid var(--green);color:var(--green);border-radius:8px;padding:8px 12px;cursor:pointer;font-size:12.5px;display:none}
+  .rewrite-bar.done input,.rewrite-bar.done .rb-ok,.rewrite-bar.done .rb-x{display:none}
+  .rewrite-bar.done .rb-undo{display:inline-block}
+  /* 待提交暂存条（修改确认后才持久化） */
+  .stage-bar{position:fixed;bottom:44px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:14px;padding:10px 16px;border:1px solid rgba(245,158,11,.5);border-radius:12px;background:rgba(24,20,14,.97);box-shadow:0 12px 40px rgba(0,0,0,.5);z-index:59;font-size:13px}
+  .stage-bar .st-tag{color:var(--accent2);font-weight:600;white-space:nowrap}
+  .stage-bar .st-acts{display:flex;gap:8px}
+  .stage-bar .st-ok{background:var(--accent);border:none;border-radius:8px;color:#14100a;font-weight:700;padding:7px 14px;cursor:pointer;font-size:12.5px}
+  .stage-bar .st-x{background:var(--panel2);border:1px solid var(--line2);border-radius:8px;color:var(--muted);padding:7px 12px;cursor:pointer;font-size:12.5px}
+  /* ===== 脚本页（调音大师）/ 档案馆 ===== */
+  .ms-table{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--panel)}
+  .ms-head,.ms-row{display:grid;grid-template-columns:92px 170px 104px 1fr;gap:10px;align-items:center}
+  .ms-head{background:var(--panel2);border-bottom:1px solid var(--line);font-size:11px;color:var(--dim);font-weight:600;letter-spacing:.5px}
+  .ms-head>div{padding:11px 14px}
+  .ms-row{border-bottom:1px solid var(--line);padding:14px 16px;transition:background .15s}
+  .ms-row:last-child{border-bottom:none}
+  .ms-ver{font-weight:700;font-size:13.5px}
+  .ms-snap{font-family:var(--mono);font-size:11.5px;color:var(--dim);display:flex;align-items:center;gap:8px}
+  .ms-view{background:var(--panel2);border:1px solid var(--line2);border-radius:7px;color:var(--muted);padding:4px 9px;cursor:pointer;font-size:11.5px;font-family:var(--txt)}
+  .ms-view:hover{color:var(--txt);border-color:var(--accent)}
+  .snap-list{max-height:52vh;overflow:auto;display:flex;flex-direction:column;gap:8px;margin:0 0 16px}
+  .snap-line{display:grid;grid-template-columns:46px 60px 1fr;gap:10px;align-items:center;font-size:12.5px;padding:8px 10px;background:var(--panel);border:1px solid var(--line2);border-radius:9px}
+  .snap-no{font-family:var(--mono);color:var(--dim);font-size:11px}
+  .snap-spk{font-weight:600}
+  .snap-txt{color:var(--txt);line-height:1.5}
+  .snap-pause{color:var(--dim);font-size:11px;text-align:right;white-space:nowrap}
+  /* 合成后逐行微调：只动 TTS 配置（停顿/语气/语速/情感），脚本内容不动 */
+  .tune-modal{width:min(680px,94vw)}
+  .tune-note{font-size:12.5px;color:var(--muted);line-height:1.6;margin-bottom:14px}
+  .tune-list{max-height:52vh;overflow:auto;display:flex;flex-direction:column;gap:8px;margin:0 0 16px}
+  .tune-row{display:flex;flex-direction:column;gap:7px;padding:10px 12px;background:var(--panel);border:1px solid var(--line2);border-radius:10px}
+  .tune-top{display:flex;align-items:center;gap:9px;min-width:0}
+  .t-no{font-family:var(--mono);font-size:11px;color:var(--dim);flex:none}
+  .t-spk{font-weight:600;font-size:12px;flex:none}
+  .t-txt{font-size:12.5px;color:var(--txt);line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+  .t-ctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .t-play{background:var(--panel2);border:1px solid var(--line2);border-radius:7px;color:var(--muted);padding:3px 10px;cursor:pointer;font-size:11.5px}
+  .t-play:hover{color:var(--txt);border-color:var(--accent)}
+  .tune-row select{background:var(--panel2);border:1px solid var(--line2);border-radius:7px;color:var(--txt);font-size:11.5px;padding:3px 6px;outline:none;cursor:pointer}
+  .tune-row select:hover{border-color:var(--accent)}
+  .ms-st{font-size:12px;font-weight:600;border-radius:99px;padding:3px 12px;justify-self:start}
+  .ms-st.todo{background:rgba(139,149,167,.14);color:var(--muted)}
+  .ms-st.running{background:rgba(251,191,36,.14);color:var(--amber)}
+  .ms-st.done{background:rgba(52,211,153,.14);color:var(--green)}
+  .ms-st.fail{background:rgba(248,113,113,.14);color:var(--red)}
+  .ms-acts{display:flex;gap:9px;justify-self:end;align-items:center}
+  .ms-acts .btn{padding:7px 14px}
+  .ms-prog{display:flex;align-items:center;gap:10px;min-width:0}
+  .ms-bar{flex:1;height:7px;background:var(--panel2);border-radius:99px;overflow:hidden;min-width:90px}
+  .ms-bar>div{height:100%;width:0;background:linear-gradient(90deg,var(--green),var(--accent));border-radius:99px;transition:width .2s}
+  .ms-prog-lab{font-size:11px;color:var(--muted);white-space:nowrap;font-family:var(--mono)}
+  .ms-out{grid-column:1/-1;border-top:1px solid var(--line);margin:12px -16px -14px;padding:12px 16px;background:var(--panel2);display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .ms-out .cache{display:flex;gap:8px;margin-right:auto}
+  .ms-out .ck{font-size:11px;color:var(--muted);background:var(--panel);border-radius:99px;padding:3px 10px}
+  .ms-out .ck.hit{color:var(--green)}
+  .ms-out .ck.new{color:var(--accent)}
+  .ms-out .file{font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:5px}
+  .ms-out .file b{color:var(--txt);font-weight:600}
+  .ms-out .dl{color:var(--accent2);cursor:pointer;font-size:12px}
+  /* 聚焦高亮 */
+  .line-row.focus{outline:2px solid var(--accent);outline-offset:-2px}
+  .cell{padding:11px 12px;display:flex;align-items:center;gap:8px;min-width:0}
+  .cell.chk{justify-content:center;padding-left:10px;padding-right:2px}
+  .row-chk{width:15px;height:15px;accent-color:var(--accent);cursor:pointer;flex:none}
+  .cell.no{font-family:var(--mono);color:var(--dim);font-size:11.5px;justify-content:flex-end;padding-right:8px}
+  .avatar{width:27px;height:27px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex:none}
+  .avatar.host{background:#312e81;color:#c7d2fe}
+  .avatar.guest{background:#3f2d12;color:#fde68a}
+  .spk .nm{font-size:12.5px;font-weight:600}
+  .editable{
+    width:100%;min-height:21px;outline:none;font-size:13.5px;line-height:1.55;color:var(--txt);
+    border:1px solid transparent;border-radius:6px;padding:2px 6px;transition:.15s;cursor:text;
+  }
+  .editable:hover{border-color:var(--line2)}
+  .editable:focus{border-color:var(--accent);background:rgba(245,158,11,.05)}
+  .pause{font-size:11px;color:var(--dim);background:var(--panel2);border-radius:6px;padding:3px 7px;white-space:nowrap}
+  .status{font-size:11px;font-weight:600;white-space:nowrap}
+  .st-todo{color:var(--dim)} .st-done{color:var(--green)} .st-busy{color:var(--amber)} .st-redo{color:var(--red)} .st-pending{color:var(--amber)}
+  .play{
+    width:32px;height:32px;border-radius:50%;border:none;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    background:var(--panel2);color:var(--txt);transition:.15s;
+  }
+  .play:hover{background:var(--accent);color:#14100a}
+  .play.busy{animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .cell.acts{justify-content:flex-end;gap:5px}
+  .row-act{width:24px;height:24px;border-radius:7px;border:1px solid var(--line2);background:var(--panel2);color:var(--muted);cursor:pointer;font-size:11px;flex:none;display:flex;align-items:center;justify-content:center;transition:.15s}
+  .row-act:hover{background:var(--panel);color:var(--txt);border-color:var(--line2)}
+  .row-act.del:hover{color:var(--red);border-color:var(--red)}
+  .spk-sel,.pause-sel{background:var(--panel2);border:1px solid var(--line2);border-radius:7px;color:var(--txt);font-size:12px;padding:4px 6px;outline:none;cursor:pointer;min-width:0;max-width:100%}
+  .spk-sel:hover,.pause-sel:hover,.spk-sel:focus,.pause-sel:focus{border-color:var(--accent)}
+
+  .budget{display:flex;align-items:center;gap:14px;margin-top:18px;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+  .budget .b-label{font-size:12px;color:var(--muted)}
+  .budget .b-num{font-size:20px;font-weight:700;font-family:var(--mono)}
+  .budget .b-num.over{color:var(--red)}
+  .bar{flex:1;height:8px;background:var(--panel2);border-radius:99px;overflow:hidden}
+  .bar>div{height:100%;background:linear-gradient(90deg,var(--green),var(--accent));border-radius:99px;transition:width .3s}
+  .bar>div.warn{background:linear-gradient(90deg,var(--accent),var(--red))}
+  .budget .b-hint{font-size:12px;color:var(--muted)}
+
+  /* ===== 审核页 ===== */
+  .gate{border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px;background:var(--panel)}
+  .gate-h{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+  .gate-h .g-name{font-weight:700;font-size:15px;flex:1}
+  .gate-h .g-count{font-size:12px;color:var(--dim);font-family:var(--mono)}
+  .check{display:flex;gap:11px;align-items:flex-start;padding:10px 8px;font-size:13.5px;color:var(--muted);cursor:pointer;border-radius:9px}
+  .check:hover{background:var(--panel2);color:var(--txt)}
+  .check .box{
+    width:18px;height:18px;border:1.5px solid var(--line2);border-radius:5px;flex:none;
+    margin-top:1px;display:flex;align-items:center;justify-content:center;font-size:11px;color:#14100a;transition:.12s;
+  }
+  .check.on .box{background:var(--green);border-color:var(--green)}
+  .check.on{color:var(--txt)}
+  .check .tag{margin-left:auto;font-size:10.5px;color:var(--dim);background:var(--panel2);border-radius:99px;padding:2px 9px;white-space:nowrap}
+  .finalize{margin-top:8px}
+
+  /* ===== 合成页 ===== */
+  .snapshot{
+    border:1px dashed var(--line2);border-radius:14px;padding:18px;margin-bottom:20px;
+    background:rgba(251,191,36,.05);font-size:13px;
+  }
+  .snapshot b{color:var(--accent2)}
+  .snapshot .sn-row{display:flex;gap:10px;margin-bottom:6px;align-items:center}
+  .snapshot .hash{font-family:var(--mono);font-size:12px;color:var(--dim)}
+  .empty-state{
+    border:1px dashed var(--line2);border-radius:14px;padding:40px;text-align:center;color:var(--dim);
+  }
+  .empty-state .big{font-size:22px;margin-bottom:10px}
+  .empty-state p{font-size:13px;line-height:1.7}
+  .cache-stat{display:flex;gap:12px;margin-bottom:20px}
+  .cstat{flex:1;border:1px solid var(--line);border-radius:12px;padding:16px;background:var(--panel);text-align:center}
+  .cstat .n{font-size:26px;font-weight:750;font-family:var(--mono)}
+  .cstat .k{font-size:12px;color:var(--dim);margin-top:3px}
+  .cstat.hit .n{color:var(--green)}
+  .cstat.new .n{color:var(--accent)}
+  .pipe-step{font-size:13px;color:var(--muted);margin-bottom:12px;display:flex;align-items:center;gap:11px;padding:11px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+  .pipe-step .dot{width:9px;height:9px;border-radius:50%;background:var(--line2);flex:none}
+  .pipe-step.on{border-color:rgba(245,158,11,.4)}
+  .pipe-step.on .dot{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+  .pipe-step.done{border-color:rgba(52,211,153,.3)}
+  .pipe-step.done .dot{background:var(--green)}
+  .pipe-step .ts{font-family:var(--mono);font-size:11px;color:var(--dim);margin-left:auto}
+  .progress{height:9px;background:var(--panel2);border-radius:99px;overflow:hidden;margin:18px 0 8px;display:none}
+  .progress.show{display:block}
+  .progress>div{height:100%;width:0;background:linear-gradient(90deg,var(--green),var(--accent));border-radius:99px;transition:width .2s}
+  .result{border:1px solid var(--line);border-radius:14px;padding:8px 18px;background:var(--panel);display:none;margin-top:6px}
+  .result.show{display:block}
+  .r-row{display:flex;align-items:center;gap:11px;padding:13px 0;font-size:13.5px;border-bottom:1px solid var(--line)}
+  .r-row:last-child{border:none}
+  .r-ic{font-size:17px}
+  .r-name{font-weight:650}
+  .r-sub{font-size:11.5px;color:var(--dim)}
+  .r-dl{margin-left:auto;color:var(--accent2);font-size:12.5px;cursor:pointer}
+
+  /* ===== 通知 ===== */
+  .toast{
+    position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);
+    background:var(--panel2);border:1px solid var(--line2);box-shadow:var(--shadow);
+    border-radius:11px;padding:11px 18px;font-size:13px;opacity:0;transition:.25s;z-index:99;pointer-events:none;max-width:80vw;
+  }
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .toast b{color:var(--accent2)}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="inner" style="display:flex;align-items:center;gap:16px;width:100%">
+    <a class="logo" href="#/">
+      <span class="dot"><svg viewBox="0 0 24 24"><path d="M12 3v18M5 8v8M19 8v8M8.5 5v14M15.5 5v14M2.5 10.5v3M21.5 10.5v3"/></svg></span>
+      Podcast Studio
+    </a>
+    <div class="crumb" id="crumb"></div>
+    <div class="spacer"></div>
+    <button class="btn ghost" id="btnHelp">?</button>
+  </div>
+</header>
+
+<nav class="epnav" id="epnav" style="display:none">
+  <div class="inner" id="epnavInner"></div>
+</nav>
+
+<main id="app"></main>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ================= 数据 ================= */
+const DATA = {
+  "科技前沿":{
+    color:"#6366f1", icon:"🧠",
+    desc:"硬核科技 · 每周一更",
+    meta:{ topic:"AI 与科技趋势", outline:"芯片算力 → 产能争夺 → 小公司生存", created:"2026-01-12", tone:"理性但不端着，先讲事实再讲观点", terms:["算力","HBM","蒸馏"], banned:["牛逼坏了","疯狂"] },
+    cast:[
+      { id:"host", name:"主持人", avatar:"主", color:"#312e81", voice:"Amy · 中文女声 · 沉稳", accent:"#c7d2fe" },
+      { id:"guest", name:"嘉宾", avatar:"嘉", color:"#3f2d12", voice:"Liam · 中文男声 · 明快", accent:"#fde68a" }
+    ],
+    episodes:[
+      { id:"ep1", title:"AI 芯片那点事", target:25, status:"草稿", updated:"昨天",
+        lines:[
+          { id:"L001", spk:"host", text:"今天我们聊一个反直觉的话题：芯片为什么成了 AI 时代的硬通货。", pause:"无" },
+          { id:"L002", spk:"guest", text:"对，我第一次看到训练集群账单的时候，第一反应是这数字是不是多打了一个零。", pause:"短" },
+          { id:"L003", spk:"host", text:"那先说说，这个数字到底从哪来？", pause:"无" },
+          { id:"L004", spk:"guest", text:"其实核心就一个词——算力。模型参数越大，需要的芯片就越多，这不是比喻，是真金白银。", pause:"短" },
+          { id:"L005", spk:"host", text:"所以现在各家都在抢产能，本质上是抢什么？", pause:"无" },
+          { id:"L006", spk:"guest", text:"抢的是时间窗口。谁先拿到足够的卡，谁就能先训练更大的模型，然后滚雪球。", pause:"短" },
+          { id:"L007", spk:"host", text:"这让我想到一个更尖锐的问题：小公司还有机会吗？", pause:"无" },
+          { id:"L008", spk:"guest", text:"有，但路径变了。以前拼算力，现在拼的是把算力用得更聪明的算法。", pause:"短" },
+        ]
+      },
+      { id:"ep2", title:"量子计算科普", target:20, status:"草稿", updated:"3 天前", lines:null }
+    ],
+    res:[
+      { name:"芯片行业深度报告.pdf", type:"pdf", chunks:["2025 年全球 AI 芯片市场规模约 780 亿美元，年增 38%。","训练集群主要由 GPU 构成，英伟达占据八成以上份额。","产能瓶颈集中在先进封装与 HBM 存储，交期已排到 12 个月。","算力单价逐年下降，但总预算因模型规模扩张反而翻倍。"] },
+      { name:"从训练到推理的成本账.md", type:"md", chunks:["训练一次千亿参数模型的电费即可达数百万美元。","推理阶段成本随用户量线性增长，是长期开支大头。","小公司转向稀疏化与小模型蒸馏，用算法换算力。"] },
+      { name:"OpenAI 与英伟达的产能合作新闻", type:"url", chunks:["报道：两家达成数千亿芯片采购协议，锁定未来两年供给。","评论：这一举动被视为算力军备竞赛的标志性事件。"] }
+    ]
+  },
+  "美食坊":{
+    color:"#ef4444", icon:"🍳",
+    desc:"家常菜 · 生活向",
+    meta:{ topic:"家常菜与厨房科学", outline:"高汤 → 火候 → 小技巧", created:"2026-02-03", tone:"亲切、像邻居大姐在厨房聊天", terms:["乳化","撇沫"], banned:["米其林"] },
+    cast:[
+      { id:"host", name:"主持人", avatar:"主", color:"#831843", voice:"Momo · 中文女声 · 亲切", accent:"#f9a8d4" }
+    ],
+    episodes:[
+      { id:"ep1", title:"家常高汤的秘密", target:15, status:"草稿", updated:"上周", lines:null }
+    ],
+    res:[
+      { name:"高汤熬制的科学.md", type:"md", chunks:["汤色奶白的秘密在于脂肪乳化，而非长时间猛火。","蛋白质与氨基酸在 90 度附近溶出最多，沸腾反而破坏风味。"] },
+      { name:"家常高汤食谱.pdf", type:"pdf", chunks:["基础配方：鸡架、猪骨、姜葱、清水比例 1:3。","分三次撇沫、中途不加水，是汤清不浊的要点。"] }
+    ]
+  }
+};
+
+/* ================= 运行时状态 ================= */
+const state = {
+  ws:null, ep:0,
+  lineState:{}, checks:{ g1:[false,false,false], g2:[false,false,false] },
+  selLines:[], rewriteUndo:{}, scripts:[],
+  pending:{ set:{}, notes:{}, baseline:null, ep:null },
+  mixerActive:null,   /* 调音大师：当前点开的脚本；点选后 AI 会话才出现并跟着这版脚本 */
+  auditorRan:false,
+  toastTimer:null, afkTimer:null
+};
+const E = id => document.getElementById(id);
+const getWs = () => DATA[state.ws];
+const getEp = () => getWs().episodes[state.ep];
+const getSpeaker = id => getWs().cast.find(c=>c.id===id) || getWs().cast[0];
+const getLines = () => {
+  const ep=getEp(); if(!ep.lines) return [];
+  ep.lines.forEach(l=>{ if(!(l.id in state.lineState)) state.lineState[l.id]={ synth:false, text:l.text }; });
+  return ep.lines.filter(l=>!l.deleted);
+};
+
+/* ================= 路由 ================= */
+function parseHash(){
+  const h = (location.hash.replace(/^#/,"") || "/");
+  const p = h.split("/").filter(Boolean).map(decodeURIComponent);
+  if(p.length===0) return { name:"home" };
+  if(p[0]==="ws"){
+    const name=p[1];
+    if(!DATA[name]) return { name:"home" };
+    if(p[2]==="resources") return { name:"resources", ws:name };
+    if(p[2]==="ep"){
+      const i=parseInt(p[3],10);
+      if(isNaN(i)||!DATA[name].episodes[i]) return { name:"ws", ws:name };
+      const view=p[4]||"writer";
+      return { name:"ep", ws:name, ep:i, view:["writer","mixer","archive"].includes(view)?view:"writer" };
+    }
+    return { name:"ws", ws:name };
+  }
+  return { name:"home" };
+}
+
+const EP_VIEWS = [
+  { key:"writer", label:"✍️ 写稿大师", badge:null },
+  { key:"mixer", label:"🎛 调音大师", badge:null },
+  { key:"archive", label:"🗃 档案馆", badge:null }
+];
+
+function render(){
+  const r = parseHash();
+  if(r.ws) state.ws=r.ws;
+  if(r.ep!==undefined) state.ep=r.ep;
+
+  /* 面包屑 + 子导航 */
+  const crumb=E("crumb"); crumb.innerHTML="";
+  const add=(txt,href,cur)=>{ const a=document.createElement("a"); a.textContent=txt; a.className=cur?"cur":""; if(href){a.href=href;} crumb.appendChild(a); if(href){const s=document.createElement("span"); s.className="sep"; s.textContent="/"; crumb.appendChild(s);} };
+  if(r.name==="home") add("我的工作间",null,true);
+  if(r.name==="ws"){ add("我的工作间","#/",false); add(r.ws,null,true); }
+  if(r.name==="resources"){ add("我的工作间","#/",false); add(r.ws,"#/ws/"+enc(r.ws),false); add("资源库",null,true); }
+  if(r.name==="ep"){ add("我的工作间","#/",false); add(r.ws,"#/ws/"+enc(r.ws),false); add(getEp().title,null,true); }
+
+  const epnav=E("epnav");
+  if(r.name==="ep"){
+    epnav.style.display="block";
+    E("epnavInner").innerHTML = EP_VIEWS.map(v=>
+      `<a href="#/ws/${enc(r.ws)}/ep/${r.ep}/${v.key}" class="${v.key===r.view?"on":""}">${v.label}${v.badge?`<span class="badge">${v.badge}</span>`:""}</a>`).join("");
+  } else { epnav.style.display="none"; }
+
+  /* 渲染页面：写稿/调音 = 双栏（主内容 + AI 会话）；档案馆 = 纯档案列表（无大师会话） */
+  const app=E("app");
+  if(r.name==="ep"){
+    /* 换页 / 换脚本 → 清掉行选中，防止润色条带着旧选中跨页残留 */
+    const ctxKey = r.ws+"|"+r.ep+"|"+r.view+"|"+(state.mixerActive||"");
+    if(state._ctxKey && state._ctxKey!==ctxKey) state.selLines=[];
+    state._ctxKey=ctxKey;
+    const content=RENDER.ep(r);
+    /* 无 AI 会话的页面：档案馆（纯档案）+ 调音大师未点开稿件（先列稿件，点开才出会话） */
+    const noChat = r.view==="archive" || (r.view==="mixer" && !state.mixerActive);
+    if(!noChat) CHAT = chatFor(r);   /* 页面 → 平级大师：先切会话再渲染侧栏；调音大师会话跟着点开的脚本 */
+    if(noChat){
+      app.innerHTML=`<div class="workbench"><div class="wb-main">${content}</div></div>`;
+    } else {
+      app.innerHTML=`<div class="workbench"><div class="wb-main">${content}</div>${aiSidebar(r)}</div>`;
+    }
+    bindWorkbench(r);
+  } else {
+    app.innerHTML=RENDER[r.name](r);
+    BIND[r.name]?.(r);
+  }
+  window.scrollTo(0,0);
+}
+const enc = encodeURIComponent;
+
+/* ================= 页面渲染 ================= */
+const RENDER = {
+  home(){
+    const cards=Object.entries(DATA).map(([name,ws])=>`
+      <a class="ws-card" href="#/ws/${enc(name)}">
+        <div class="top">
+          <span class="ic" style="background:${ws.color}22;color:${ws.color}">${ws.icon}</span>
+          <div><div class="name">${name}</div><div class="desc">${ws.desc}</div></div>
+        </div>
+        <div class="stats">
+          <span class="chip">🎙️ ${ws.episodes.length} 集</span>
+          <span class="chip">📄 ${ws.res.length} 份素材</span>
+        </div>
+        <div class="go">进入工作间 →</div>
+      </a>`).join("");
+    return `
+      <div class="page"><div class="inner">
+        <div class="page-head">
+          <h1>我的工作间</h1>
+          <div class="sub">一个工作间 = 一个节目。素材、单集、元数据互不串门；AI 检索只在自己的工作间里翻。</div>
+        </div>
+        <div class="ws-grid">
+          ${cards}
+          <a class="ws-card new" onclick="toast('（占位）新建工作间')">
+            <span class="plus">＋</span>新建工作间
+          </a>
+        </div>
+      </div></div>`;
+  },
+
+  ws(r){
+    const ws=getWs();
+    const eps=ws.episodes.map((ep,i)=>`
+      <a class="ep-row" href="#/ws/${enc(r.ws)}/ep/${i}/script">
+        <span class="e-ic">🎙️</span>
+        <div class="e-main">
+          <div class="e-name">${ep.title}</div>
+          <div class="e-meta">目标 ${ep.target} 分钟 · 更新于 ${ep.updated}${ep.lines?` · ${ep.lines.length} 行`:""}</div>
+        </div>
+        <span class="e-enter">进入工作台 →</span>
+      </a>`).join("");
+    const res=ws.res.slice(0,3).map(res=>`
+      <span class="chip">${res.type==="pdf"?"📄":res.type==="md"?"📝":"🔗"} ${res.name}</span>`).join("");
+    return `
+      <div class="page"><div class="inner">
+        <div class="ws-hero">
+          <span class="ic" style="background:${ws.color}22;color:${ws.color}">${ws.icon}</span>
+          <div><h2>${r.ws}</h2><div class="desc">${ws.desc}</div></div>
+          <div class="acts">
+            <a class="btn" href="#/ws/${enc(r.ws)}/resources">📄 资源库</a>
+          </div>
+        </div>
+
+        <div class="section-title">📋 节目元数据 <span class="more" onclick="toast('（占位）编辑节目元数据：大纲 / 主题 / 口吻 / 术语 / 禁词')">编辑</span></div>
+        <div class="note-card">
+          <div style="font-size:13.5px;color:var(--muted)">📌 主题：<b style="color:var(--txt)">${ws.meta.topic}</b></div>
+          <div style="font-size:13.5px;color:var(--muted)">🗺️ 大纲：<b style="color:var(--txt)">${ws.meta.outline}</b></div>
+          <div style="font-size:13.5px;color:var(--muted)">🕒 创建：<b style="color:var(--txt)">${ws.meta.created}</b></div>
+          <div style="font-size:13.5px;color:var(--muted)">🎯 节目口吻：<b style="color:var(--txt)">${ws.meta.tone}</b></div>
+          <div class="tags">
+            ${ws.meta.terms.map(t=>`<span class="tag">术语 · ${t}</span>`).join("")}
+            ${ws.meta.banned.map(t=>`<span class="tag hl">禁用 · ${t}</span>`).join("")}
+          </div>
+        </div>
+
+        <div class="section-title">🎤 说话人配置 <span class="more" onclick="toast('（占位）新增 / 编辑说话人与音色')">编辑</span></div>
+        <div class="cast-card">
+          ${ws.cast.map(s=>`
+            <div class="cast-row">
+              <span class="avatar" style="background:${s.color};color:${s.accent}">${s.avatar}</span>
+              <div class="c-main"><div class="c-name">${s.name}</div><div class="c-voice">${s.voice}</div></div>
+              <button class="btn" onclick="toast('（占位）用「${s.voice}」试听一句话')">试听</button>
+            </div>`).join("")}
+        </div>
+
+        <div class="section-title">🎙️ 单集 <span class="more" onclick="toast('（占位）新建单集')">＋ 新建单集</span></div>
+        ${eps}
+
+        <div class="section-title">📄 素材库摘要
+          <a class="more" href="#/ws/${enc(r.ws)}/resources">全部素材 →</a>
+        </div>
+        <div class="note-card"><div class="stats" style="display:flex;gap:8px;flex-wrap:wrap">${res}</div>
+          <div style="font-size:12px;color:var(--dim);margin-top:12px">🔒 AI 写稿时只检索本工作间已关联的素材</div>
+        </div>
+      </div></div>`;
+  },
+
+  resources(r){
+    const ws=getWs();
+    const cards=ws.res.map((res,i)=>`
+      <div class="res-card">
+        <div class="head" data-res="${i}">
+          <span class="r-ic">${res.type==="pdf"?"📄":res.type==="md"?"📝":"🔗"}</span>
+          <span class="r-name">${res.name}</span>
+          <span class="r-cnt">${res.chunks.length} 块</span>
+        </div>
+        <div class="meta">
+          <span class="chip">${res.type==="pdf"?"PDF 文档":res.type==="md"?"Markdown":"网页链接"}</span>
+          <span class="chip">✅ 已切块 + 已索引</span>
+        </div>
+        <div class="chunks">${res.chunks.map((c,ci)=>`<div class="chunk-row"><span class="idx">#${ci+1}</span><span>${c}</span></div>`).join("")}</div>
+      </div>`).join("");
+    return `
+      <div class="page"><div class="inner">
+        <div class="page-head">
+          <h1>资源库 · ${r.ws}</h1>
+          <div class="sub">上传 markdown / PDF / URL，系统自动切块并建索引。素材归属于本工作间，跨节目复用用「复制到」。</div>
+        </div>
+        <div class="toolbar">
+          <div class="search">
+            <span>🔍</span><input placeholder="检索本工作间的素材…（AI 写稿时的检索范围）"><span class="hint">仅 ${r.ws}</span>
+          </div>
+          <button class="btn primary" onclick="toast('（占位）上传素材 → 自动切块 + 向量化')">＋ 上传素材</button>
+        </div>
+        <div class="res-grid">${cards}</div>
+      </div></div>`;
+  },
+
+  ep(r){
+    const ep=getEp();
+    if(r.view==="mixer") return mixerPage(r,ep);
+    if(r.view==="archive") return archivePage(r,ep);
+    return scriptPage(r,ep);
+  }
+};
+
+/* ---- 脚本页 ---- */
+function scriptPage(r,ep){
+  const lines=getLines();
+  const body = lines.length===0
+    ? `<div class="line-row"><div class="cell" style="grid-column:1/-1;color:var(--dim);padding:30px;justify-content:center">本集还没有脚本 · 去「会话」页写稿，或点「＋ 加一行」手动创建</div></div>`
+    : lines.map((l,i)=>{
+        const st=state.lineState[l.id];
+        /* 行号 = 当前顺序（1-based）；l.id 是内部身份，Agent 用它。内容层只有文本+说话人：停顿属听感层（调音大师），无逐行合成状态 */
+        return `<div class="line-row" data-id="${l.id}">
+          <div class="cell chk"><input type="checkbox" class="row-chk" data-id="${l.id}" title="勾选以进行润色重写" ${state.selLines.includes(l.id)?"checked":""}></div>
+          <div class="cell no">${"L"+String(i+1).padStart(3,"0")}</div>
+          <div class="cell"><select class="spk-sel" data-id="${l.id}" title="说话人">
+            ${getWs().cast.map(s=>`<option value="${s.id}" ${s.id===l.spk?"selected":""}>${s.name}</option>`).join("")}
+          </select></div>
+          <div class="cell txt"><div class="editable" contenteditable="true">${st.text}</div></div>
+          <div class="cell acts"><button class="row-act row-edit" title="编辑">✏️</button><button class="row-act row-add" title="插入一行">＋</button><button class="row-act row-del" title="删除">🗑</button></div>
+        </div>`; }).join("");
+  const dur = calcDur();
+  return `
+    <div class="page"><div class="inner">
+      <div class="page-head">
+        <h1>${ep.title} · 写稿大师</h1>
+        <div class="sub">只管稿件（内容）：行编辑区（角色文案）+ AI 会话。改动先暂存，点「📌 提交改动」才持久化；满意后点「📥 定稿」生成一版脚本，交给调音大师。</div>
+      </div>
+      <div class="script-toolbar">
+        <div class="tgroup"><span class="tlabel">说话人</span>
+          ${getWs().cast.map(s=>`<span class="spk-chip" data-spk="${s.id}"><span class="avatar" style="background:${s.color};color:${s.accent}">${s.avatar}</span>${s.name}</span>`).join("")}
+        </div>
+        <button class="btn" id="btnAddLine">＋ 加一行</button>
+        <button class="btn primary" id="btnSave">📥 定稿</button>
+        <span class="pill" id="saveCount">${state.scripts.length? `已定稿 ${state.scripts.length} 版` : ""}</span>
+      </div>
+      ${state.auditorRan ? `
+      <div class="report-banner" id="checkReport">
+        <span class="rb-ic">🤖</span>
+        <span class="rb-title">Auditor 子代理 · 审核报告</span>
+        <span class="rb-sum">结构闸 <b style="color:${state.checks.g1[0]?"var(--green)":"var(--red)"}">${state.checks.g1[0]?"通过":"1 项未过（L004 超 60 字）"}</b> · 成稿闸 3 项通过</span>
+        <span class="rb-x" onclick="this.parentElement.style.display='none'">✕</span>
+      </div>` : ""}
+      <div class="line-table">
+        <div class="line-head"><div>选</div><div>#</div><div>说话人</div><div>台词</div><div>操作</div></div>
+        ${body}
+      </div>
+      <div class="stage-bar" id="stageBar" style="display:${pendingCount()?'flex':'none'}">
+        <span class="st-tag" id="stageCount">✏️ ${pendingCount()} 处改动待提交</span>
+        <div class="st-acts">
+          <button class="st-x" id="btnRevert">↩ 撤销全部</button>
+          <button class="st-ok" id="btnCommit">📌 提交改动</button>
+        </div>
+      </div>
+      <div class="rewrite-bar" id="rewriteBar">
+        <span class="rb-tag" id="rbTag">已选中 0 行</span>
+        <input id="rbInput" placeholder="输入润色提示，如：更口语 / 更有反问感 / 缩短 20%…（仅重写选中行）">
+        <div class="rb-acts">
+          <button class="rb-ok" id="rbOk">✨ 润色重写</button>
+          <button class="rb-x" id="rbCancel">取消</button>
+          <button class="rb-undo" id="rbUndo">↩ 撤销</button>
+        </div>
+      </div>
+      <div class="budget">
+        <div><div class="b-label">预计成片时长</div><div class="b-num ${dur.over?"over":""}" id="durNum">${dur.txt}</div></div>
+        <div class="bar"><div id="durBar" style="width:${dur.pct}%" class="${dur.pct>100?"warn":""}"></div></div>
+        <div class="b-hint">目标 ${ep.target} 分钟 · 超 20% 会提醒</div>
+      </div>
+      <div class="modal-backdrop" id="saveModal">
+        <div class="modal">
+          <div class="modal-h">📥 确认定稿</div>
+          <div class="fx-status">用当前稿件生成<b style="color:var(--accent2)">第 ${state.scripts.length+1} 版</b>脚本（默认 TTS 参数），交给调音大师。稿件继续可改、可再定稿新一版。</div>
+          <div class="modal-acts">
+            <button class="btn" id="msCancel">取消</button>
+            <button class="btn primary" id="msOk">确认定稿</button>
+          </div>
+        </div>
+      </div>
+    </div></div>`;
+}
+
+function calcDur(){
+  const lines=getLines(); if(!lines.length) return { txt:"--:--", pct:0, over:false };
+  const target=getEp().target;
+  const chars=lines.reduce((s,l)=>s+(state.lineState[l.id]?.text||l.text).length,0);
+  const secs=chars/4.2;
+  return {
+    txt:String(Math.floor(secs/60)).padStart(2,"0")+":"+String(Math.floor(secs%60)).padStart(2,"0"),
+    pct:Math.min(100,(secs/(target*60))*100),
+    over:secs>target*60*1.2
+  };
+}
+/* 改稿后刷新预计时长条（原缺此函数，润色/撤销后直接抛错 → 润色窗口表现为“坏了”） */
+function renderDuration(){
+  const dur=calcDur();
+  E("durNum").textContent=dur.txt;
+  E("durNum").className="b-num"+(dur.over?" over":"");
+  E("durBar").style.width=dur.pct+"%";
+  E("durBar").className=dur.pct>100?"warn":"";
+}
+
+/* 原型演示：按提示做简单文本变换，真实系统由 edit 工具重写 */
+function polishText(t,prompt){
+  let out=t;
+  if(/正式|庄重/.test(prompt)) out=out.replace(/说白了/g,"本质上是");
+  else if(/短|压缩|精简/.test(prompt)) out=t.length>30 ? t.slice(0,Math.floor(t.length*0.7)).replace(/[，。、]?$/,"")+"。" : t;
+  else if(/反问/.test(prompt)) out=out.replace(/(。)$/,"，对吧？").replace(/吗\?$/,"呢？");
+  else out=out.replace(/本质上是/g,"说白了就是").replace(/其实就是/g,"说白了就是").replace(/所以现在/g,"所以现在嘛");
+  return out!==t ? out : "说真的，"+t;
+}
+
+/* ---- 调音大师页（脚本：先点选一版 → 才出现 AI 会话，会话跟着这版脚本） ---- */
+function mixerPage(r,ep){
+  const ms=state.scripts;
+  const viewModal = `
+      <div class="modal-backdrop" id="viewModal">
+        <div class="modal">
+          <div class="modal-h">🗂 <span id="viewTitle">快照</span></div>
+          <div class="snap-list" id="viewList"></div>
+          <div class="modal-acts"><button class="btn" id="viewClose">关闭</button></div>
+        </div>
+      </div>`;
+  if(!ms.length) return `
+    <div class="page"><div class="inner">
+      <div class="page-head">
+        <h1>${ep.title} · 调音大师</h1>
+        <div class="sub">读脚本（内容 + TTS 配置）→ 逐行调停顿 / 语气 / 语速 / 情感 → 试听 → 合成音频。内容一个字不改，只动 TTS 配置。</div>
+      </div>
+      <div class="empty-state">
+        <div class="big">🎛</div>
+        <p>还没有脚本。<br>去「写稿大师」页把稿件「📥 定稿」，会生成默认脚本到这里做听感调配。</p>
+      </div>
+    </div></div>`;
+  /* 还没点开脚本：只列脚本列表，AI 会话不出现（点开后才出，且跟着这版脚本） */
+  if(!state.mixerActive){
+    const rows=ms.map(m=>`
+      <div class="ms-row">
+        <div class="ms-ver">${m.ver}</div>
+        <div class="ms-snap">${m.snap}</div>
+        <span class="ms-st ${m.status}">${ST_LABEL[m.status]}</span>
+        <div class="ms-acts">
+          <button class="btn ms-view" data-id="${m.id}">🗂 快照</button>
+          <button class="btn primary ms-pick" data-id="${m.id}">🎧 打开调配</button>
+        </div>
+      </div>`).join("");
+    return `
+      <div class="page"><div class="inner">
+        <div class="page-head">
+          <h1>${ep.title} · 调音大师</h1>
+          <div class="sub">点选一版脚本后，AI 会话才出现，并且跟着这版脚本走（可切换、逐行调 TTS 配置、合成音频）。</div>
+        </div>
+        <div class="ms-table">
+          <div class="ms-head"><div>版本</div><div>快照</div><div>状态</div><div>操作</div></div>
+          ${rows}
+        </div>
+        ${viewModal}
+      </div></div>`;
+  }
+  /* 已点开某版脚本 → 调配 TTS 配置 + 跟着它的 AI 会话 */
+  const m = ms.find(x=>x.id===state.mixerActive) || ms[ms.length-1];
+  const opt=(cur,list)=>list.map(v=>`<option ${cur===v?"selected":""}>${v}</option>`).join("");
+  const rows=m.lines.map((l,i)=>{
+    const t=lineTts(l);
+    return `<div class="tune-row">
+      <div class="tune-top">
+        <span class="t-no">L${String(i+1).padStart(3,"0")}</span>
+        <span class="t-spk">${getSpeaker(l.spk).name}</span>
+        <span class="t-txt">${l.text||"—"}</span>
+      </div>
+      <div class="t-ctrl">
+        <button class="t-play" data-id="${l.id}">🎧 试听</button>
+        <select class="t-tone" data-id="${l.id}">${opt(t.tone,TONE_OPTS)}</select>
+        <select class="t-speed" data-id="${l.id}">${opt(t.speed,SPEED_OPTS)}</select>
+        <select class="t-emotion" data-id="${l.id}">${opt(t.emotion,EMOTION_OPTS)}</select>
+        <span style="font-size:11px;color:var(--dim)">停顿</span>
+        <select class="t-pause" data-id="${l.id}">${opt(t.pause,PAUSE_OPTS)}</select>
+      </div>
+    </div>`;
+  }).join("");
+  const verSel = ms.length>1
+    ? `<select id="scriptSel">${ms.map(x=>`<option value="${x.id}" ${x.id===m.id?"selected":""}>${x.ver}${x.status==="done"?" · 🎧":""}</option>`).join("")}</select>`
+    : `<span class="t-spk" style="font-weight:700">${m.ver}</span>`;
+  return `
+    <div class="page"><div class="inner">
+      <div class="page-head">
+        <h1>${ep.title} · 调音大师</h1>
+        <div class="sub">正在调配「${m.ver}」脚本（${m.snap}）：逐行调 TTS 配置（停顿 / 语气 / 语速 / 情感），可单行试听；点「合成音频」出片。内容（文本 · 说话人）一个字不改。</div>
+      </div>
+      <div class="script-toolbar">
+        <button class="btn" id="btnBackList">‹ 返回列表</button>
+        <div class="tgroup"><span class="tlabel">脚本</span>${verSel}</div>
+        <span class="ms-st ${m.status}">${ST_LABEL[m.status]}</span>
+        <button class="btn primary" id="btnSynth">${m.status==="done"?"🔄 重新合成":"🚀 合成音频"}</button>
+        <span class="pill" id="mixerOut">${m.status==="done"?`🎧 master.mp3 · ${m.dur} · 缓存 ${m.hit}/${m.lines.length}`:""}</span>
+      </div>
+      <div class="tune-list" id="tuneList" style="max-height:none">${rows}</div>
+      ${m.status==="running" ? `<div class="ms-prog" style="margin-top:10px"><div class="ms-bar"><div id="mixerBar" style="width:${m.pct||0}%"></div></div><span class="ms-prog-lab" id="mixerLab">合成中 ${Math.floor(m.pct||0)}%</span></div>` : ""}
+      ${viewModal}
+    </div></div>`;
+}
+
+/* ---- 档案馆页：存放生成完毕的音频档案（已合成的脚本） ---- */
+function archivePage(r,ep){
+  const done=state.scripts.filter(m=>m.status==="done");
+  if(!done.length) return `
+    <div class="page"><div class="inner">
+      <div class="page-head">
+        <h1>${ep.title} · 档案馆</h1>
+        <div class="sub">存放生成完毕的音频档案。每版脚本合成后归档到这里，可回放、可下载。</div>
+      </div>
+      <div class="empty-state">
+        <div class="big">🗃</div>
+        <p>还没有音频档案。<br>去「调音大师」页点「🚀 合成音频」，生成后归档到这里。</p>
+      </div>
+    </div></div>`;
+  const rows=done.map(m=>`
+    <div class="ms-row" data-id="${m.id}">
+      <div class="ms-ver">${m.ver}</div>
+      <div class="ms-snap">${m.snap}</div>
+      <span class="ms-st done">已归档</span>
+      <div class="ms-acts">
+        <button class="btn ms-play" data-id="${m.id}">▶ 播放</button>
+        <span class="file" style="margin-left:6px">🎧 master.mp3 · ${m.dur} · ${m.syncedAt}</span>
+        <span class="dl">下载 →</span>
+      </div>
+    </div>`).join("");
+  return `
+    <div class="page"><div class="inner">
+      <div class="page-head">
+        <h1>${ep.title} · 档案馆</h1>
+        <div class="sub">生成完毕的音频档案：每版脚本合成后归档到这里，可回放、可下载。</div>
+      </div>
+      <div class="ms-table">
+        <div class="ms-head"><div>版本</div><div>快照</div><div>状态</div><div>音频档案</div></div>
+        ${rows}
+      </div>
+    </div></div>`;
+}
+
+/* ================= 行为绑定 ================= */
+const BIND = {
+  resources(r){
+    document.querySelectorAll(".res-card .head").forEach(h=>{
+      h.onclick=()=>{
+        const ch=h.nextElementSibling.nextElementSibling;
+        const show=!ch.classList.contains("show");
+        document.querySelectorAll(".chunks.show").forEach(x=>x.classList.remove("show"));
+        if(show) ch.classList.add("show");
+      };
+    });
+  },
+  script(r){
+    /* 行编辑 */
+    document.querySelectorAll(".editable").forEach(el=>{
+      el.addEventListener("blur",()=>{
+        const row=el.closest(".line-row"); if(!row) return;
+        const id=row.dataset.id; const st=state.lineState[id]; if(!st) return;
+        const line=getEp().lines.find(l=>l.id===id);
+        if(el.innerText.trim()!==line.text){
+          line.text=el.innerText.trim()||line.text;
+          st.text=line.text; st.textDirty=true;
+          touch(id,"改文本");
+          toast(`${id} 已改动 · 待提交`);
+          renderDuration();
+          updateStageBar();
+        }
+      });
+    });
+    /* 行 CRUD：编辑聚焦 / 插入一行 / 逻辑删除 */
+    document.querySelectorAll(".row-edit").forEach(b=>b.onclick=()=>focusEdit(b.closest(".line-row")));
+    document.querySelectorAll(".row-add").forEach(b=>b.onclick=()=>addLine(b.closest(".line-row").dataset.id));
+    document.querySelectorAll(".row-del").forEach(b=>b.onclick=()=>deleteLine(b.closest(".line-row").dataset.id));
+    E("btnAddLine")?.addEventListener("click",()=>addLine());
+    E("btnCommit")?.addEventListener("click",commitPending);
+    E("btnRevert")?.addEventListener("click",revertPending);
+    /* 行内属性编辑：说话人 / 停顿（改后缓存失效 + 记入上下文） */
+    document.querySelectorAll(".spk-sel").forEach(sel=>{
+      sel.addEventListener("change",()=>{
+        const row=sel.closest(".line-row"); const id=row?.dataset.id;
+        const line=id&&getEp().lines.find(l=>l.id===id); if(!line) return;
+        line.spk=sel.value;
+        const st=state.lineState[id]; if(st){ st.textDirty=true; }
+        touch(id,"改说话人");
+        updateStageBar(); toast(`${id} 说话人 → ${getSpeaker(line.spk).name} · 待提交`);
+      });
+    });
+    /* 选中行 → 内联润色重写（细粒度，像 AI IDE） */
+    const bar=E("rewriteBar"), rbInput=E("rbInput"), rbTag=E("rbTag");
+    function refreshRowStates(){
+      state.selLines.forEach(id=>{
+        const row=document.querySelector(`.line-row[data-id="${id}"]`);
+        if(!row) return;
+        const st=state.lineState[id];
+        const ed=row.querySelector(".editable"); if(ed&&st) ed.innerText=st.text;
+      });
+    }
+    function refreshSel(){
+      document.querySelectorAll(".line-row").forEach(r=>{
+        const id=r.dataset.id;
+        r.classList.toggle("sel",state.selLines.includes(id));
+        const chk=r.querySelector(".row-chk"); if(chk) chk.checked=state.selLines.includes(id);
+      });
+      const n=state.selLines.length;
+      if(n>0){ bar.classList.add("show"); bar.classList.remove("done"); rbTag.textContent=`已选中 ${n} 行：${state.selLines.join("、")}`; }
+      else bar.classList.remove("show");
+    }
+    /* 选择行：只通过行首勾选框（防止点行误选）→ 触发内联润色重写 */
+    document.querySelectorAll(".row-chk").forEach(chk=>{
+      chk.addEventListener("change",()=>{
+        const id=chk.dataset.id;
+        state.selLines = chk.checked
+          ? (state.selLines.includes(id) ? state.selLines : [...state.selLines,id])
+          : state.selLines.filter(x=>x!==id);
+        refreshSel();
+      });
+    });
+    E("rbCancel").onclick=()=>{ state.selLines=[]; refreshSel(); };
+    E("rbOk").onclick=()=>{
+      if(!state.selLines.length) return;
+      const prompt=rbInput.value.trim()||"更口语一点";
+      state.rewriteUndo={};
+      state.selLines.forEach(id=>{
+        const st=state.lineState[id]; if(!st) return;
+        const line=getEp().lines.find(l=>l.id===id);
+        state.rewriteUndo[id]=st.text;
+        line.text=polishText(line.text,prompt);
+        st.text=line.text; st.synth=false; st.textDirty=true;
+        touch(id,"润色");
+      });
+      const n=state.selLines.length;
+      rbTag.textContent=`✅ 已用 edit 润色 ${n} 行（${prompt}）· 待提交`;
+      bar.classList.add("done");
+      refreshRowStates();
+      renderDuration();
+      updateStageBar();
+      toast(`已用 edit 工具润色 ${n} 行 · 待提交`);
+    };
+    E("rbUndo").onclick=()=>{
+      Object.entries(state.rewriteUndo).forEach(([id,orig])=>{
+        const st=state.lineState[id], line=getEp().lines.find(l=>l.id===id);
+        if(!st||!line) return;
+        line.text=orig; st.text=orig; st.synth=false; st.textDirty=true;
+        delete state.pending.set[id]; delete state.pending.notes[id];
+      });
+      state.rewriteUndo={};
+      rbTag.textContent="↩ 已撤销";
+      refreshRowStates();
+      renderDuration();
+      updateStageBar();
+    };
+    /* 点击空白 → 失焦：清除选中 + 收起润色条 + 去掉聚焦高亮 */
+    document.querySelector(".wb-main").addEventListener("click",e=>{
+      if(e.target.closest(".line-row")||e.target.closest(".rewrite-bar")) return;
+      state.selLines=[]; refreshSel();
+      document.querySelectorAll(".line-row.focus").forEach(r=>r.classList.remove("focus"));
+    });
+    refreshSel();
+    /* 定稿：先确认，再用当前稿件生成一版默认脚本（稿件不冻结） */
+    E("btnSave")?.addEventListener("click",()=>E("saveModal").classList.add("show"));
+    E("msOk")?.addEventListener("click",()=>{ E("saveModal").classList.remove("show"); finalizeScript(); });
+    E("msCancel")?.addEventListener("click",()=>E("saveModal").classList.remove("show"));
+    E("saveModal")?.addEventListener("click",e=>{ if(e.target.id==="saveModal") e.target.classList.remove("show"); });
+  },
+  mixer(r){
+    /* 还没点开脚本：脚本列表 → 点选一版，AI 会话跟着它出现 */
+    document.querySelectorAll(".ms-pick").forEach(b=>{
+      b.onclick=()=>{ state.mixerActive=b.dataset.id; render(); };
+    });
+    E("btnBackList")?.addEventListener("click",()=>{ state.mixerActive=null; render(); });
+    /* 切换脚本版本（AI 会话跟着新选的脚本） */
+    const sel=E("scriptSel");
+    sel?.addEventListener("change",()=>{ state.mixerActive=sel.value; render(); });
+    /* 合成音频：对当前点开的脚本 */
+    E("btnSynth")?.addEventListener("click",()=>synthScript(state.mixerActive));
+    /* 逐行试听 */
+    document.querySelectorAll(".t-play").forEach(b=>{
+      b.onclick=()=>tunePlayLine(b.dataset.id);
+    });
+    /* TTS 配置改动 → 写回该脚本行的 tts（合成输入），重新合成生效 */
+    document.querySelectorAll(".t-pause,.t-tone,.t-speed,.t-emotion").forEach(sel=>{
+      sel.addEventListener("change",()=>{
+        const id=sel.dataset.id;
+        const m=state.scripts.find(x=>x.id===state.mixerActive);
+        if(!m) return;
+        const line=m.lines.find(l=>l.id===id); if(!line) return;
+        const row=sel.closest(".tune-row");
+        line.tts={ pause:row.querySelector(".t-pause").value, tone:row.querySelector(".t-tone").value, speed:row.querySelector(".t-speed").value, emotion:row.querySelector(".t-emotion").value };
+        m.status="todo";   /* TTS 配置变了 → 需重新合成 */
+        toast(`${id} TTS 配置已改（停顿 ${line.tts.pause} / ${line.tts.tone} / ${line.tts.speed} / ${line.tts.emotion}）· 点「合成音频」生效`);
+        render();
+      });
+    });
+    /* 查看快照：只读回放当时的脚本行（行号 / 说话人 / 文本） */
+    document.querySelectorAll(".ms-view").forEach(b=>{
+      b.onclick=()=>{
+        const m=state.scripts.find(x=>x.id===b.dataset.id); if(!m) return;
+        E("viewTitle").textContent=`${m.ver} · ${m.snap} · 脚本快照`;
+        E("viewList").innerHTML=m.lines.map((l,i)=>`
+          <div class="snap-line">
+            <span class="snap-no">L${String(i+1).padStart(3,"0")}</span>
+            <span class="snap-spk">${getSpeaker(l.spk).name}</span>
+            <span class="snap-txt">${l.text||"—"}</span>
+          </div>`).join("");
+        E("viewModal").classList.add("show");
+      };
+    });
+    E("viewClose")?.addEventListener("click",()=>E("viewModal").classList.remove("show"));
+    E("viewModal")?.addEventListener("click",e=>{ if(e.target.id==="viewModal") e.target.classList.remove("show"); });
+  },
+  archive(r){
+    /* 档案馆：回放已归档音频 */
+    document.querySelectorAll(".ms-play").forEach(b=>{
+      b.onclick=()=>{
+        const m=state.scripts.find(x=>x.id===b.dataset.id);
+        toast(`▶ 正在播放 ${m?.ver} · master.mp3（${m?.dur||"—"}）`);
+      };
+    });
+  }
+};
+
+/* 逐行微调听感（调音大师页）：脚本行 = 稿件行 + TTS 配置（停顿/语气/语速/情感），配置直接长在脚本行上，定稿时给默认值 */
+const TUNE_DEFAULT = { pause:"无", tone:"自然", speed:"正常", emotion:"中性" };
+const PAUSE_OPTS = ["无","短","中","长"];
+const TONE_OPTS = ["自然","活泼","沉稳","严肃"];
+const SPEED_OPTS = ["慢","正常","快"];
+const EMOTION_OPTS = ["中性","开心","低落","激动"];
+function lineTts(l){ return l.tts || {...TUNE_DEFAULT}; }
+function tunePlayLine(id){
+  const row=document.querySelector(`.tune-row .t-play[data-id="${id}"]`)?.closest(".tune-row");
+  const pause=row?.querySelector(".t-pause")?.value||"无";
+  const tone=row?.querySelector(".t-tone")?.value||"自然";
+  const speed=row?.querySelector(".t-speed")?.value||"正常";
+  const emotion=row?.querySelector(".t-emotion")?.value||"中性";
+  const b=document.querySelector(`.t-play[data-id="${id}"]`);
+  if(b){ b.textContent="⏳ 试听中"; b.disabled=true; }
+  setTimeout(()=>{ if(b){ b.textContent="🎧 试听"; b.disabled=false; } },600);
+  toast(`${id} 试听 · 停顿 ${pause} / ${tone} / ${speed} / ${emotion}`);
+}
+
+/* ============ 定稿：用当前稿件生成一版默认脚本（内容冻结，TTS 配置归调音大师改） ============ */
+function finalizeScript(){
+  if(pendingCount()) commitPending();   /* 有未提交改动 → 先确认持久化 */
+  const lines=getLines();
+  if(!lines.length){ toast("还没有稿件，无法定稿"); return; }
+  const snap="snap_"+Date.now().toString(16).slice(-6)+"_"+state.ws.slice(0,2)+state.ep;
+  const ver="第 "+(state.scripts.length+1)+" 版";
+  state.scripts.push({
+    id:"s_"+Date.now().toString(16),
+    snap, ver, status:"todo", pct:0, hit:0, need:0, dur:"", syncedAt:"",
+    lines: lines.map(l=>({ id:l.id, spk:l.spk, text:l.text, tts:{...TUNE_DEFAULT} }))   /* 脚本行 = 稿件行 + TTS 配置（默认参数）；定稿后内容冻结 */
+  });
+  const pill=E("saveCount"); if(pill) pill.textContent="已定稿 "+state.scripts.length+" 版";
+  CHATS.writer.msgs.push({who:"ai", role:"align", text:`📥 已定稿：用当前稿件生成了 ${ver}（${snap}）默认脚本，交给调音大师。稿件没冻结，可以继续改，改完再定稿新一版。`});
+  renderMsgs();
+  toast(`已定稿 ${ver} · 见「调音大师」页`);
+}
+
+/* ============ 脚本行 CRUD（原型演示：新增/逻辑删除） ============ */
+function nextSerial(){
+  const lines=getEp().lines||[];
+  const max=lines.reduce((m,l)=>{ const n=parseInt((l.id||"").replace(/[^\d]/g,""),10); return isNaN(n)?m:Math.max(m,n); },0);
+  return "L"+String(max+1).padStart(3,"0");
+}
+function addLine(afterId){
+  const ep=getEp(); if(!ep.lines) ep.lines=[];
+  const line={ id:nextSerial(), spk:getWs().cast[0].id, text:"" };
+  if(afterId){ const i=ep.lines.findIndex(l=>l.id===afterId); ep.lines.splice(i+1,0,line); }
+  else ep.lines.push(line);
+  touch(line.id,"新增");
+  render(); toast(`已新增 ${line.id} · 待提交`);
+}
+function deleteLine(id){
+  const ep=getEp(); const line=(ep.lines||[]).find(l=>l.id===id);
+  if(!line) return;
+  line.deleted=true;                 /* 逻辑删除：id 保留，read/视图过滤 */
+  touch(id,"删除");
+  render(); toast(`已删除 ${id} · 待提交`);
+}
+function focusEdit(row){
+  const ed=row.querySelector(".editable"); if(!ed) return;
+  ed.focus();
+  const r=document.createRange(); r.selectNodeContents(ed);
+  const s=window.getSelection(); s.removeAllRanges(); s.addRange(r);
+}
+
+/* ============ 待提交：修改先暂存，确认（提交改动）才持久化 ============ */
+function deepLines(){ return JSON.parse(JSON.stringify(getEp().lines||[])); }
+function pendingCount(){ return Object.keys(state.pending.set||{}).length; }
+function ensurePending(){
+  const key=state.ws+":"+state.ep;
+  if(state.pending.ep!==key){ state.pending={ set:{}, notes:{}, baseline:null, ep:key }; }
+  if(!state.pending.baseline) state.pending.baseline=deepLines();
+}
+function touch(id,note){ ensurePending(); state.pending.set[id]=true; state.pending.notes[id]=note; }
+function updateStageBar(){
+  const bar=E("stageBar"); if(!bar) return;
+  const n=pendingCount();
+  bar.style.display=n?"flex":"none";
+  const c=E("stageCount"); if(c) c.textContent=`✏️ ${n} 处改动待提交`;
+}
+function commitPending(){
+  if(!pendingCount()) return;
+  const notes=Object.entries(state.pending.notes).map(([id,n])=>`${id} ${n}`).join("、");
+  CHATS.writer.msgs.push({who:"ai", role:"align", text:`📌 用户提交改动（${pendingCount()} 处）：${notes} —— 已持久化并记入上下文。`});
+  state.pending={ set:{}, notes:{}, baseline:deepLines(), ep:state.ws+":"+state.ep };
+  render();
+}
+function revertPending(){
+  if(!pendingCount()) return;
+  getEp().lines=JSON.parse(JSON.stringify(state.pending.baseline));
+  state.lineState={};
+  state.pending={ set:{}, notes:{}, baseline:null, ep:state.ws+":"+state.ep };
+  render(); toast("已撤销全部改动");
+}
+
+/* ============ Auditor 子代理：隔离上下文 + 专属工具，由会话触发 ============ */
+function runAuditorCheck(){
+  CHATS.writer.msgs.push({who:"ai", role:"auditor", text:"Auditor 子代理已接单：开启隔离上下文 + 专属校验工具（validate_script），不接触写稿 / 检索工具…"});
+  renderMsgs();
+  setTimeout(()=>{
+    state.auditorRan=true;
+    state.checks.g1=[false,true,true];
+    state.checks.g2=[true,true,true];
+    CHATS.writer.msgs.push({who:"ai", role:"auditor", text:"✅ 检查完成：结构闸 1 项未过（L004 超 60 字），成稿闸 3 项通过。报告已贴在脚本页顶部。"});
+    renderMsgs();
+    render();   /* 重建脚本页以显示检查报告横幅 */
+  },1400);
+}
+
+/* ============ 合成：脚本上的状态机（待合成 → 合成中 → 已合成） ============ */
+const ST_LABEL = { todo:"待合成", running:"合成中", done:"已合成", fail:"失败" };
+const SYNTH_STEPS = ["校验快照","切片 → 分片合成 TTS","拼接 · 停顿 · 响度归一","回填字级时间戳","确定性验证"];
+function synthScript(id){
+  const m=state.scripts.find(x=>x.id===id); if(!m) return;
+  if(m.status==="running") return;         /* 该行合成进行中，防重复 */
+  m.status="running"; m.pct=0; m.hit=0; m.need=0;
+  render();                                /* 重建调音大师页 → 显示「合成中」+ 进度条 */
+  let step=0, p=0;
+  state.afkTimer=setInterval(()=>{
+    p+=2.6; m.pct=p;
+    const bar=E("mixerBar");
+    if(bar) bar.style.width=Math.min(100,p)+"%";
+    const lab=E("mixerLab");
+    if(lab) lab.textContent=`合成中 · ${SYNTH_STEPS[Math.min(step,4)]} ${Math.floor(p)}%`;
+    if(p>=100){
+      clearInterval(state.afkTimer); state.afkTimer=null;
+      const hit=m.lines.filter(l=>{
+        const t=l.tts;
+        const tuned=t && (t.pause!=="无"||t.tone!=="自然"||t.speed!=="正常"||t.emotion!=="中性");
+        return !tuned && state.lineState[l.id]?.synth && !state.lineState[l.id]?.textDirty;
+      }).length;
+      m.status="done"; m.hit=hit; m.need=m.lines.length-hit; m.dur="约 25 分钟";
+      m.syncedAt=new Date().toTimeString().slice(0,5); m.pct=100;
+      toast(`${m.ver} 合成完成 🎉 已归档`);
+      mixerThread(m.id).msgs.push({who:"ai", role:"mixer", text:`📦 ${m.ver}（${m.snap}）合成完成 · 缓存命中 ${hit} 行，新合成 ${m.need} 行。音频已归档进「档案馆」。`});
+      render();
+      return;
+    }
+    if(p>(step+1)*100/5) step++;
+  },50);
+}
+
+/* ================= AI 会话侧边栏（两个平级大师：编辑页写稿大师 / 稿件页调音大师） ================= */
+const ROLE = { align:"🗣️ 助手", writer:"✍️ 写稿", mixer:"🎛 tune", auditor:"🤖 Auditor", retriever:"📎 retrieve" };
+const CHATS = {
+  /* 写稿大师（编辑页）：只碰稿件（内容），工具 read/add/edit/retrieve */
+  writer:{ msgs:[
+    {who:"ai", role:"align", text:"我是写稿大师（编辑页），只管稿件（内容）：写稿、改稿、对齐都在这个会话里。这集想聊什么方向？节目元数据里你偏爱「先讲事实，再讲观点」。"},
+    {who:"me", text:"聊芯片产能，想听小公司怎么活"},
+    {who:"ai", role:"align", text:"好，方向已对齐：主题、核心论点 ×3、素材引用 ×4。结论留在这个会话里，要写稿就直说。"},
+    {who:"me", text:"写稿吧"},
+    {who:"ai", role:"writer", text:"已用 add / edit 工具把第一版落进「编辑」页（稿件）。想改哪段直接说。"},
+    {who:"me", text:"第三部分有点干"},
+    {who:"ai", role:"writer", text:"收到。我用 edit 工具重写了 L005–L008，改成更口语的来回。这是改动预览，接受就落稿：",
+     proposal:{ lines:"L005–L008", text:"把「本质上是抢什么？」改成一句反问，答案由嘉宾带出，减少主持人的设问。"}}
+  ]}
+};
+/* 调音大师：每版脚本一个会话（跟着点开的脚本），工具 tune + 读脚本（内容 + TTS 配置），触发合成 */
+const mixerThreads = {};
+function mixerThread(msId){
+  if(!mixerThreads[msId]){
+    const m=state.scripts.find(x=>x.id===msId);
+    mixerThreads[msId]={ kind:"mixer", msgs:[
+      {who:"ai", role:"mixer", text:`我是调音大师，正在跟这版脚本「${m?m.ver:"?"}」（${m?m.snap:""}）：读脚本（内容 + TTS 配置）、逐行调停顿/语气/语速/情感（tune）、触发合成。改内容请回「写稿大师」页。`},
+      {who:"me", text:"合成这一版"},
+      {who:"ai", role:"mixer", text:"好，我读取这版脚本（内容 + TTS 配置），开始合成。缓存命中的行直接复用。"},
+      {who:"me", text:"第二句语气活泼一点"},
+      {who:"ai", role:"mixer", text:"已用 tune 把 L002 设为「活泼 / 正常 / 开心」。保存后点「重新合成」生效，快照内容一个字不变。"}
+    ]};
+  }
+  return mixerThreads[msId];
+}
+function chatFor(r){ return r.view==="mixer" ? mixerThread(state.mixerActive) : CHATS.writer; }
+let CHAT = CHATS.writer;   /* 当前会话：render 时按页面 + 点开的脚本切换 */
+/* 演示：按当前大师路由（写稿大师走写稿/检索，检查走 Auditor 子代理；调音大师走 tune/合成） */
+function routeReply(t){
+  if(CHAT.kind==="mixer"){
+    if(/合成|出片|重新合成/.test(t)) return {role:"mixer", text:"好，我对当前稿件重新合成：读取快照 + 现有 tune 参数 → 跑合成流水线。完成后归档进「档案馆」。"};
+    if(/语气|语速|情感|停顿|活泼|沉稳|开心|低落|激动|调/.test(t)) return {role:"mixer", text:"已用 tune 逐行调整听感参数（停顿/语气/语速/情感）。保存后点「重新合成」生效，快照内容不变。"};
+    return {role:"mixer", text:"我是调音大师。可以让我「合成这一版」「把某句语气调活泼」等。我没有 add/edit，改脚本请回写稿大师页。"};
+  }
+  if(/检查|审核|把关|报告/.test(t)) return {role:"auditor", text:"Auditor 子代理开始审核脚本（隔离上下文 + 校验工具）…", triggerCheck:true};
+  if(/写|改|稿|重写/.test(t)) return {role:"writer", text:"我用 edit 工具改好了。这是改动预览，接受就落稿：", proposal:{ lines:"L005–L008", text:"把「本质上是抢什么？」改成一句反问，答案由嘉宾带出。"}};
+  if(/素材|查|引用|检索/.test(t)) return {role:"retriever", text:"我用 retrieve 工具检索了本工作间素材：芯片报告 #1、成本账 #2、#3。"};
+  return {role:"align", text:"我是写稿大师。可以让我「写稿」「改某段」「检查」或「查素材」。"};
+}
+
+function aiSidebar(r){
+  const msgs=CHAT.msgs.map(m=>{
+    const whoTag = m.who==="ai" ? (ROLE[m.role]||"AI") : "你";
+    const inner = m.proposal
+      ? `${m.text}<div class="proposal"><div class="p-t">✏️ 提案 · ${m.proposal.lines}</div>${m.proposal.text}<div class="p-acts"><button class="p-ok" data-ok="1">接受</button><button class="p-no">拒绝</button></div></div>`
+      : m.text;
+    return `<div class="msg ${m.who}"><div class="m-who ${m.who}">${whoTag}</div>${inner}</div>`;
+  }).join("");
+  const isMixer = r.view==="mixer";
+  const title = isMixer ? "🎛 调音大师" : "✍️ 写稿大师";
+  const m = isMixer ? state.scripts.find(x=>x.id===state.mixerActive) : null;
+  const sub = isMixer ? (m?`${m.ver} · ${m.snap}`:"") : getEp().title;
+  const ph = isMixer ? "合成这一版 / 把某句调活泼一点 / 语速放慢…" : "聊聊主题 / 让我写稿 / 改某段 / 检查 / 查素材…";
+  return `
+    <aside class="ai-sidebar">
+      <div class="ai-head">
+        <span class="ai-t">${title}</span>
+        <span class="ai-s">${sub}</span>
+      </div>
+      <div class="msg-scroll" id="msgScroll">${msgs}</div>
+      <div class="ai-input">
+        <textarea id="aiInput" placeholder="${ph}"></textarea>
+        <button id="btnSend">发送</button>
+      </div>
+    </aside>`;
+}
+
+function bindWorkbench(r){
+  BIND[r.view]?.(r);   /* 绑定主内容（写稿/调音/档案馆） */
+  if(r.view==="archive" || (r.view==="mixer" && !state.mixerActive)) return;   /* 档案馆 + 调音大师未点开脚本：无会话 */
+  const send=()=>{
+    const inp=E("aiInput"); const t=inp.value.trim(); if(!t) return;
+    CHAT.msgs.push({who:"me", text:t});
+    inp.value="";
+    renderMsgs();
+    setTimeout(()=>{
+      const reply=routeReply(t);
+      CHAT.msgs.push(reply);
+      renderMsgs();
+      if(reply.triggerCheck) runAuditorCheck();   /* 检查 → 派给 Auditor 子代理（隔离上下文） */
+    },700);
+  };
+  E("btnSend").onclick=send;
+  E("aiInput").addEventListener("keydown",e=>{ if(e.key==="Enter"&&!e.shiftKey){ e.preventDefault(); send(); } });
+  bindProposals();
+  scrollMsgs();
+}
+
+function renderMsgs(){
+  const scroll=E("msgScroll"); if(!scroll) return;
+  scroll.innerHTML=CHAT.msgs.map(m=>{
+    const whoTag = m.who==="ai" ? (ROLE[m.role]||"AI") : "你";
+    const inner = m.proposal
+      ? `${m.text}<div class="proposal"><div class="p-t">✏️ 提案 · ${m.proposal.lines}</div>${m.proposal.text}<div class="p-acts"><button class="p-ok" data-ok="1">接受</button><button class="p-no">拒绝</button></div></div>`
+      : m.text;
+    return `<div class="msg ${m.who}"><div class="m-who ${m.who}">${whoTag}</div>${inner}</div>`;
+  }).join("");
+  bindProposals();
+  scrollMsgs();
+}
+function bindProposals(){
+  document.querySelectorAll(".p-ok").forEach(b=>{
+    b.onclick=()=>{
+      b.closest(".proposal").innerHTML="<div style='color:var(--green)'>✓ 已接受，改动已应用到脚本 · 缓存行失效，需重新合成</div>";
+      toast("提案已应用到脚本 · 相关行缓存失效 🔄");
+    };
+  });
+  document.querySelectorAll(".p-no").forEach(b=>{
+    b.onclick=()=>{ b.closest(".proposal").innerHTML="<div style='color:var(--muted)'>已拒绝，脚本未改动</div>"; };
+  });
+}
+function scrollMsgs(){
+  const s=E("msgScroll"); if(s) s.scrollTop=s.scrollHeight;
+}
+
+/* ================= 通用 ================= */
+function toast(msg){
+  const t=E("toast"); t.innerHTML=msg; t.classList.add("show");
+  clearTimeout(state.toastTimer);
+  state.toastTimer=setTimeout(()=>t.classList.remove("show"),2400);
+}
+
+E("btnHelp").onclick=()=>toast("原型：首页 → 工作间 → 单集工作台（写稿 / 调音 / 档案馆）。写稿大师管「稿件」（内容：台词 + 说话人），点「📥 定稿」生成一版默认脚本；调音大师管「脚本」（内容 + 每行 TTS 配置：停顿/语气/语速/情感），会话只在点开某版脚本后出现并跟着它。编辑页改动先暂存（🟠 待提交），点「📌 提交改动」持久化；到「调音大师」页点选一版脚本 → 逐行调 TTS 配置 → 「🚀 合成音频」，完成后归档进「档案馆」。");
+window.addEventListener("hashchange",render);
+render();
+</script>
+</body>
+</html>
