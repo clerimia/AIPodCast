@@ -676,9 +676,9 @@ function WriterPage(){
         ))}
       </div>
 
-      {/* 待提交（暂存 → 确认） */}
+      {/* 待提交（暂存 → 确认）：脱离文档流，悬浮在主内容区底部中间 */}
       {pendingCount()>0 && (
-        <div className="mt-3 flex items-center gap-3 rounded-xl border border-accent/40 bg-accent/10 px-4 py-3 animate-slide">
+        <div className="fixed bottom-6 left-[calc(50%-186px)] z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-accent/40 bg-[#1a1f2b]/95 px-5 py-3 shadow-card backdrop-blur animate-pop">
           <span className="text-[13px] font-semibold text-accent2">✏️ {pendingCount()} 处改动待提交</span>
           <span className="flex-1" />
           <Btn onClick={revertPending}>↩ 撤销全部</Btn>
