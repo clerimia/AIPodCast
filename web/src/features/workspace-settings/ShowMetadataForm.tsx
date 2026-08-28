@@ -66,7 +66,7 @@ export function ShowMetadataForm({ wsId, metadata }: { wsId: string; metadata: S
               id="meta-topic"
               value={form.topic}
               onChange={(e) => setForm({ ...form, topic: e.target.value })}
-              placeholder="每期围绕什么聊"
+              placeholder="每集围绕什么聊"
             />
           </div>
           <div className="space-y-1.5">

@@ -67,13 +67,7 @@ export async function getWorkspace(db: Db, wsId: string) {
 
   const [meta] = await db.select().from(showMetadata).where(eq(showMetadata.wsId, wsId))
   const speakerRows = await db
-    .select({
-      id: speakers.id,
-      name: speakers.name,
-      persona: speakers.persona,
-      gender: speakers.gender,
-      voice: speakers.voice,
-    })
+    .select(speakerColumns)
     .from(speakers)
     .where(eq(speakers.wsId, wsId))
     .orderBy(asc(speakers.createdAt))
@@ -117,6 +111,15 @@ export async function updateShowMetadata(db: Db, wsId: string, input: ShowMetada
 
 // ---- 说话人 ----
 
+// 四处（详情/列表/建/改）共用的说话人投影
+const speakerColumns = {
+  id: speakers.id,
+  name: speakers.name,
+  persona: speakers.persona,
+  gender: speakers.gender,
+  voice: speakers.voice,
+}
+
 async function workspaceExists(db: Db, wsId: string) {
   const [ws] = await db
     .select({ id: workspaces.id })
@@ -128,17 +131,7 @@ async function workspaceExists(db: Db, wsId: string) {
 /** 工作间不存在 → null（路由映射 404） */
 export async function listSpeakers(db: Db, wsId: string) {
   if (!(await workspaceExists(db, wsId))) return null
-  return db
-    .select({
-      id: speakers.id,
-      name: speakers.name,
-      persona: speakers.persona,
-      gender: speakers.gender,
-      voice: speakers.voice,
-    })
-    .from(speakers)
-    .where(eq(speakers.wsId, wsId))
-    .orderBy(asc(speakers.createdAt))
+  return db.select(speakerColumns).from(speakers).where(eq(speakers.wsId, wsId)).orderBy(asc(speakers.createdAt))
 }
 
 export async function createSpeaker(db: Db, wsId: string, input: SpeakerCreateInput) {
@@ -157,13 +150,7 @@ export async function createSpeaker(db: Db, wsId: string, input: SpeakerCreateIn
         gender: input.gender ?? '',
         voice: input.voice,
       })
-      .returning({
-        id: speakers.id,
-        name: speakers.name,
-        persona: speakers.persona,
-        gender: speakers.gender,
-        voice: speakers.voice,
-      })
+      .returning(speakerColumns)
     return row
   })
 }
@@ -182,13 +169,7 @@ export async function updateSpeaker(
     .update(speakers)
     .set({ ...set, updatedAt: new Date() })
     .where(and(eq(speakers.id, speakerId), eq(speakers.wsId, wsId)))
-    .returning({
-      id: speakers.id,
-      name: speakers.name,
-      persona: speakers.persona,
-      gender: speakers.gender,
-      voice: speakers.voice,
-    })
+    .returning(speakerColumns)
   return row ?? null
 }
 

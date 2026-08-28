@@ -34,7 +34,8 @@ export function SpeakerList({ wsId, speakers }: { wsId: string; speakers: Speake
     onError: (e) => {
       if (e instanceof ApiError && e.code === 'CONFLICT') {
         toast.error('该说话人已被脚本行引用，暂不能删除', {
-          description: '请先在引用它的单集里改绑或删除相关脚本行，再回来删除。',
+          // 行删除是逻辑删除（deleted=true，外键仍在），只有改绑能解除引用
+          description: '请先在引用它的单集里把这些脚本行改绑到其他说话人，再回来删除。',
         })
       } else {
         toast.error(`删除失败：${apiErrorMessage(e)}`)
