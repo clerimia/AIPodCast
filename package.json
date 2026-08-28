@@ -1,0 +1,23 @@
+{
+  "name": "aipodcast",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,green \"npm run dev -w server\" \"npm run dev -w web\"",
+    "migrate": "npm run migrate -w server",
+    "db:up": "docker compose up -d --wait",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "engines": {
+    "node": ">=22.19"
+  }
+}
