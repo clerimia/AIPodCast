@@ -24,6 +24,14 @@ export interface Workspace {
   createdAt: string
 }
 
+/** GET /api/workspaces/:wsId —— 详情一次拉全 show_metadata + speakers（#19） */
+export interface WorkspaceDetail {
+  id: string
+  name: string
+  showMetadata: ShowMetadata
+  speakers: Speaker[]
+}
+
 export interface Speaker {
   id: string
   name: string
@@ -31,6 +39,17 @@ export interface Speaker {
   gender: string
   voice: string
 }
+
+/** POST speakers；voice 为 24 系统音色名之一（web/src/lib/voices.ts） */
+export interface CreateSpeakerInput {
+  name: string
+  voice: string
+  persona?: string
+  gender?: string
+}
+
+/** PATCH speakers/:id；字段缺省 = 不改 */
+export type UpdateSpeakerInput = Partial<CreateSpeakerInput>
 
 export interface ShowMetadata {
   outline: string
@@ -40,6 +59,9 @@ export interface ShowMetadata {
   bannedWords: string
   intro: string
 }
+
+/** PUT show-metadata；字段缺省 = 不改 */
+export type ShowMetadataInput = Partial<ShowMetadata>
 
 export interface Episode {
   id: string

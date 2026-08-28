@@ -1,6 +1,7 @@
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify'
 import { createDb, type Db } from './db/client.js'
 import { healthRoutes } from './modules/health/routes.js'
+import { workspaceRoutes } from './modules/workspaces/routes.js'
 import { AppError, type ErrorPayload } from './shared/errors.js'
 import { env } from './env.js'
 
@@ -48,13 +49,16 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
       return
     }
     req.log.error(err)
+    const status = err.statusCode && err.statusCode >= 400 ? err.statusCode : 500
     const payload: ErrorPayload = {
-      error: { code: 'INTERNAL', message: err.message },
+      // 非 AppError 的 4xx（如请求体 JSON 解析失败）按 BAD_REQUEST 报告
+      error: { code: status === 400 ? 'BAD_REQUEST' : 'INTERNAL', message: err.message },
     }
-    reply.status(err.statusCode && err.statusCode >= 400 ? err.statusCode : 500).send(payload)
+    reply.status(status).send(payload)
   })
 
   await app.register(healthRoutes, { prefix: '/api' })
+  await app.register(workspaceRoutes, { prefix: '/api/workspaces' })
 
   return app
 }

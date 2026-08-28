@@ -3,6 +3,7 @@ export const qk = {
   health: () => ['health'] as const,
   workspaces: () => ['workspaces'] as const,
   workspace: (wsId: string) => ['workspace', wsId] as const,
+  episodes: (wsId: string) => ['episodes', wsId] as const,
   episode: (episodeId: string) => ['episode', episodeId] as const,
   script: (episodeId: string) => ['script', episodeId] as const,
   artifact: (episodeId: string) => ['artifact', episodeId] as const,

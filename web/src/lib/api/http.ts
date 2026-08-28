@@ -54,3 +54,10 @@ export const http = {
     request<T>(path, { method: 'PATCH', body, signal }),
   delete: <T>(path: string, signal?: AbortSignal) => request<T>(path, { method: 'DELETE', signal }),
 }
+
+/** toast/错误页统一文案来源 */
+export function apiErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) return err.message
+  if (err instanceof Error) return err.message
+  return String(err)
+}
