@@ -55,7 +55,7 @@ skills/
 │       └── dialogue.md   # 对话模板
 ```
 
-> 与我们的领域模型对照：这条「extract → script_gen → tts_synth」拆法与我们的 素材/稿件（写稿大师）→ 脚本 → 合成（调音大师）分层同构，可作为实现侧 skill 组织形态的参考。
+> 与我们的领域模型对照：这条「extract → script_gen → tts_synth」拆法与我们的 资源/稿件（写稿大师）→ 脚本 → 合成（调音大师）分层同构，可作为实现侧 skill 组织形态的参考。
 
 ## 三、典型 AI 播客生成完整 Pipeline
 

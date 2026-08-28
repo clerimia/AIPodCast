@@ -22,7 +22,8 @@
 // PostgreSQL 17 (ParadeDB) + drizzle-orm
 
 // ---- 文本层：写稿大师（编辑页会话）的工具面 ----
-episodes(        id, ws_id )
+episodes(        id, ws_id, show_notes text default '' )
+// 单集简介：单集级活文本（用户手写/写稿大师会话代笔），合成时快照进产物 notes.md（ADR-0009）
 script_lines(    id uuid PK, episode_id FK→episodes, serial, speaker_id, text,
                  instructions text default '',               // 指令：语气/情感/风格（引擎 input.instructions）
                  post jsonb default '{}',                    // 逐行后期覆盖：{ "pause":"短", "speed":"正常" }，空=用集级默认
@@ -34,7 +35,7 @@ change_set_ops(  cs_id, seq, op, line_id, payload jsonb )
 // ---- 音频层：合成 + 后期 ----
 audio_assets(    id PK, script_line_id FK UNIQUE→script_lines, audio_ref,
                  duration_ms, created_at )
-// 音频素材：每脚本行 0..1 份单行音频（clip），跟随脚本行；改台词/改指令 → 作废重合成；改停顿/语速 → 只重拼接
+// 音频素材：每脚本行 0..1 份单行音频（clip），原子、跟随脚本行；写稿侧只产出它、不加工它（职责边界见下）；改台词/改指令 → 作废重合成；改停顿/语速 → 只重拼接
 asset_library(   id PK, ws_id, kind enum('bgm','sfx'), asset_ref,
                  duration_ms, created_at )
 // 素材库：工作间级共享容器，只装 BGM/音效/垫乐，不绑定单集；对白素材不进库（ADR-0006）
@@ -52,6 +53,13 @@ artifacts(       id, episode_id FK UNIQUE→episodes, kind, audio_ref,
 2. 逐行查 audio_assets（by script_line_id）：命中复用，未命中调 TTS 合成并回填（试听 = 单行合成入口，同样落素材）
 3. 后期拼接：停顿 = 相邻素材间隔（gap，逐行 post 或集级 post_rules）+ 语速变速（atempo）+ 响度归一 → 回填行级时间戳 → 确定性验证
 4. 写 artifacts（替换该集旧产物）
+
+## 职责边界（编辑页产出原子片段，拼接与产物归后期）
+
+- **写稿侧只产出原子音频片段**：编辑页下半区（音频工作区）试听 = 单行合成，一个脚本行 → 一份 clip（落 audio_assets）；写稿大师会话只碰文本，不产出音频。
+- **写稿侧不加工片段**：不 trim / 不 split / 不自由摆放；片段在写稿侧是原子的、不可再分。
+- **拼接与最终产物归后期**：后期（非 AI 确定性流水线）读脚本行 + 已落地素材 + 后期参数 → 拼接 / 停顿 / 语速 / 响度 / 时间戳 → master（artifacts，一集 0..1）。
+- **片段编辑（若做）属后期序列层（已预留方向）**：timeline 项引用素材 + 摆放 / 裁剪参数（offset / duration / 重叠 / 交叉淡化）；素材 1:1 与可重合成不变，编辑片段只改序列、不重写源素材。
 
 ## 素材语义（音频素材）
 
@@ -87,4 +95,7 @@ GET /ep/:id/script → 当前脚本（可编辑）：script_lines（过滤 delet
 - 音色不随内容冻结：重新合成跟随当前说话人配置（ADR-0001）。
 - 微调 = 改指令（文本，触发重合成）+ 改后期参数（停顿/语速，只重拼接）。
 - 产物是独立实体（artifacts 表），一集 0..1 产物，重新合成替换。
+- 产物 master = mp3 44.1k 单声道 192k（#7：引擎 24k mono 重采样至 44.1k；wav/opus 留作增强）；行级文稿 = 脚本行 + 计算时间戳（JSON，随产物存 transcript_ref，播放器高亮当前行）。
+- 素材与产物都存本地文件系统（#8）：audio_ref/transcript_ref/notes_ref = 相对 MEDIA_ROOT 的相对路径，DB 不存二进制；目录 `media/ws-{id}/ep-{id}/assets/{line_id}.wav` 与 `.../artifacts/{master.mp3, transcript.json, notes.md}`；替换先写临时文件再原子 rename。
+- 单集简介 = episodes.show_notes 单集级活字段（可空、用户手写、写稿大师可会话代笔），合成时快照进产物 notes.md、重新合成保留；MVP 不自动生成（#11）。
 - 引擎输出固定 wav 24k mono；指令式合成（qwen3-tts-instruct-flash），请求体只有 input{text, voice, language_type, instructions, optimize_instructions}，无 parameters（`docs/research/qwen3-tts-instruct-flash.md`）。
