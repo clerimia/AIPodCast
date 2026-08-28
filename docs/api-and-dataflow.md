@@ -142,6 +142,8 @@ flowchart LR
 | POST | `/api/episodes/:episodeId/lines/:lineId/preview` | **试听 = 单行合成**（同步）。命中素材直接返回，未命中走 TTS 合成并回填 `audio_assets` |
 | POST | `/api/episodes/:episodeId/synthesize` | **整集合成**（异步）：确定性流水线 → 替换产物，返回任务句柄 |
 | GET | `/api/synthesis-jobs/:jobId` | 合成任务状态（前端轮询） |
+| POST | `/api/synthesis-jobs/:jobId/cancel` | 取消合成任务（#22）：协作式中止，已落盘素材保留、旧产物不动 |
+| GET | `/api/episodes/:episodeId/synthesis-job` | 当前活跃合成任务快照，无则 404（#22，页面重载后恢复轮询） |
 | GET | `/api/episodes/:episodeId/artifact` | 最新产物元数据 + 行级文稿（播放器据此高亮） |
 | GET | `/api/media/:wsId/:episodeId/assets/:lineId` | 单行素材 wav（试听播放） |
 | GET | `/api/media/:wsId/:episodeId/artifacts/:file` | 产物文件：`master.mp3` / `transcript.json` / `notes.md` |
@@ -160,7 +162,7 @@ flowchart LR
 }
 ```
 
-> 长时间任务的**细粒度进度与取消交互**留 [合成任务进度与取消交互](https://github.com/clerimia/AIPodCast/issues/22)；本文只定最小轮询形状，作为 #22 的起点。
+> 长时间任务的**细粒度进度与取消**已定案（[#22](https://github.com/clerimia/AIPodCast/issues/22)）：继续轮询不上 SSE，载荷增强为逐行（`doneLineIds`/`currentLine`），状态机加 `canceling/canceled`，新增 cancel 与 active-job 端点。见 `docs/synthesis-progress-and-cancel.md`；上方 `GET /synthesis-jobs/:jobId` 的最小形状是其子集，`SYNTH_FAILED` 错误码由 `SYNTH_LINE_FAILED`/`SYNTH_POST_FAILED`/`SYNTH_VERIFY_FAILED` 取代。
 
 - `GET /artifact` 返回：`{ id, createdAt, durationMs, size, audioUrl, transcriptUrl, notesUrl, transcript: [{ serial, speakerName, text, startMs, endMs }], notes: "单集简介文本或 null" }`。行级文稿是**快照**（ADR-0008），播放器一次读全量，不回 DB 按行查。
 
