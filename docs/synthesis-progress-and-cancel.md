@@ -1,12 +1,12 @@
 # 合成任务进度与取消（轮询增强 + 取消语义）
 
 > 决议来源：[#22 合成任务进度与取消交互](https://github.com/clerimia/AIPodCast/issues/22)（wayfinder 地图 #14）。
-> 上界：合成 = 确定性流水线非 AI 会话（ADR-0007）；验证失败保留旧产物不覆盖；试听（单行）同步已定（#19），不进本文；合成任务表在内存（#21）。
+> 上界：合成 = 确定性流水线非 AI 会话（ADR-0007）；验证失败保留旧产物不覆盖；试听（单行）同步已定（#19），不进本文。合成任务存储原定内存 `Map`（#21），#28 重新讨论改为落库 `synthesis_jobs`、编排形态仍为进程内 async 循环不引入队列/worker（见「jobs 落库与重启收场」）。
 > 本文档是**进度与取消交互方案**（计划层，plan not do），扩展 `docs/api-and-dataflow.md` 的最小轮询形状（`status/stage/doneLines/totalLines` 全部保留，本文是其超集）；冲突处以本文为准。
 
 ## 一句话
 
-整集合成的进度**继续走轮询**（不引入第二条 SSE）：`GET /synthesis-jobs/:jobId` 的载荷从「只报阶段」增强为「阶段 + 逐行」（累积 `doneLineIds` + 当前行），状态机增加 `canceling/canceled` 两个值；新增 `POST /synthesis-jobs/:jobId/cancel`（协作式取消：在途 TTS 请求即刻中止、ffmpeg 各步之间查旗标不杀进程）与 `GET /episodes/:id/synthesis-job`（页面重载后重新挂上活跃任务）；取消**保留已落盘素材**，旧产物永不因取消或失败被覆盖。
+整集合成的进度**继续走轮询**（不引入第二条 SSE）：`GET /synthesis-jobs/:jobId` 的载荷从「只报阶段」增强为「阶段 + 逐行」（累积 `doneLineIds` + 当前行），状态机增加 `canceling/canceled` 两个值；新增 `POST /synthesis-jobs/:jobId/cancel`（协作式取消：在途 TTS 请求即刻中止、ffmpeg 各步之间查旗标不杀进程）与 `GET /episodes/:id/synthesis-job`（页面重载后重新挂上活跃任务）；取消**保留已落盘素材**，旧产物永不因取消或失败被覆盖。任务落库 `synthesis_jobs` 留痕：重启后未到终态的孤儿任务标记 `interrupted` 并如实返回（不自动续跑）；合成期间该集 preview 改为**行级互斥**（不再整集 409）——均为 #28 重新讨论定案。
 
 ## 决策与理由
 
@@ -59,6 +59,11 @@ stateDiagram-v2
   running_verify --> canceling
   running_encode --> canceling
   canceling --> canceled
+  pending --> interrupted: 进程重启
+  running_tts --> interrupted: 进程重启
+  running_post --> interrupted: 进程重启
+  running_verify --> interrupted: 进程重启
+  running_encode --> interrupted: 进程重启
   running_tts --> failed: 单行重试仍失败
   running_post --> failed: ffmpeg 非零退出
   running_verify --> failed: 验证不过（旧产物保留）
@@ -72,7 +77,7 @@ stateDiagram-v2
 {
   "jobId": "uuid",
   "episodeId": "uuid",
-  "status": "pending|running|canceling|succeeded|failed|canceled",
+  "status": "pending|running|canceling|succeeded|failed|canceled|interrupted",
   "stage": "tts|post|encode|verify",      // pending 时 null；终态定格在最后所处阶段
   "totalLines": 40,                        // 快照行数（非删除行）
   "doneLines": 12,                         // = doneLineIds.length（含命中复用）
@@ -91,7 +96,7 @@ stateDiagram-v2
 - **失败语义：单行 fail-fast**。TTS 单行失败先做**进程内重试 1 次**（2 s 退避，仅对超时 / 网络错误 / 5xx / 429；4xx 参数错误直接失败），仍失败即整任务 `failed`（`SYNTH_LINE_FAILED`，携带行）。不为失败任务继续烧后续行的 TTS——已落盘的素材仍在，重试整个任务时命中复用，代价低。
 - `SYNTH_POST_FAILED`（ffmpeg 非零退出/超时）、`SYNTH_VERIFY_FAILED`（确定性验证不过，旧产物保留）不带行信息。
 - #19 错误形状示例中的 `SYNTH_FAILED` 由这三个码取代。
-- 未知/已丢失（重启后）的 jobId → `404 NOT_FOUND`。
+- 未知 jobId → `404 NOT_FOUND`。任务已落库，重启后不再「丢失」：未到终态的任务被启动时标记 `interrupted`，轮询已知 `jobId` 拿到的是 `interrupted` 终态快照。
 
 ## 端点增量（#22 新增，其余端点照 #19）
 
@@ -102,36 +107,41 @@ stateDiagram-v2
 
 并发规则：
 
-- **同一单集同时只允许一个活跃任务**：活跃期间再 `POST /synthesize` 或该集 `preview` → `409 CONFLICT`（合成进行中）。**跨单集**并发任务允许（TTS 是网络型、ffmpeg 是 CPU 型，任务间无共享可变状态——素材/产物都按单集隔离）。
+- **同一单集同时只允许一个活跃任务**：活跃期间再 `POST /synthesize` → `409 CONFLICT`（合成进行中）。**跨单集**并发任务允许（TTS 是网络型、ffmpeg 是 CPU 型，任务间无共享可变状态——素材/产物都按单集隔离）。
+- **合成期间该集 preview = 行级互斥**（#28 重新讨论，替代原「活跃期间 preview 一律 409」）：preview 的 `lineId` 在任务快照 `plan` 内且尚未计入 `doneLineIds`（正在合成或排队中）→ `409 CONFLICT`（该行合成中）；其余情况照常试听——已计入 `doneLineIds` 的行、以及任务已进 post/encode 阶段后的任意行（TTS 循环已结束，不再有素材回填竞争）。
 - **合成期间脚本文本可改**（写稿大师不被合成阻塞）：任务按启动时快照跑；期间 `/changes` 对某行的作废照常生效，本次产物可能已含改动前音频，行上「需重新合成」标记如实反映，下次合成收敛。
-- **进程重启丢任务句柄**（#21 既定，不翻）：活跃任务丢失后 active-job 端点与 `GET /synthesis-jobs/:jobId` 都 404，前端按「任务丢失」收场（停轮询、刷产物）；已落盘素材与旧产物完好。
+- **进程重启 → 孤儿任务标 `interrupted`**（#28 重新讨论，替代原「丢句柄 404」）：后端启动时把所有非终态任务行置 `interrupted`（终态，error 注明进程重启中断）；已知 `jobId` 的轮询拿到 `interrupted` 终态快照照常收场。**不自动续跑**——停机期间脚本可能已变（快照过期），且开发期 watch 重启会反复踢任务；重新合成一次即可，已落盘素材命中复用。已落盘素材与旧产物完好。
+- **编排形态维持进程内 async 循环**（#28 定案）：编排是纯 I/O（TTS fetch + ffmpeg 子进程），事件循环无饿死风险；不引入队列 / worker 进程 / 任务库。
 
 ## 前端消费（扩展 #20）
 
 - `useSynthesisJob(jobId)`：`refetchInterval: 2000`，`status ∈ {pending, running, canceling}` 时轮询、终态停；收到 404 → 停轮询并 `invalidateQueries(['artifact'])`。
-- 编辑页挂载时查 `useActiveSynthesisJob(episodeId)`（GET active-job），查到活跃任务则接管其 `jobId` 继续轮询——**刷新页面不丢进行中的合成**。
+- 编辑页挂载时查 `useActiveSynthesisJob(episodeId)`（GET active-job），查到活跃任务则接管其 `jobId` 继续轮询——**刷新页面不丢进行中的合成**；查到 `interrupted` 任务则显示「上次合成被中断」横幅 + 一键重新合成（可关闭，不落确认状态，新任务发起后自然失效）；404 = 无任务，静默。
 - 进度 UI（下半区音频工作区）：总进度条 `doneLines/totalLines` + 阶段文案（正在合成 L013… / 拼接与响度… / 校验… / 编码…）；行列表按 `doneLineIds` 打 ✓、`currentLine` 转圈。
 - **取消按钮**（`running/canceling` 时可见）：点按 → `POST cancel` → 「取消中…」→ 终态 toast（已取消：已合成 N 行素材已保留 / 合成失败：L013…）；终态后 `invalidateQueries(['script'])` 让行素材状态对齐落盘现实。取消/失败后再点合成即重试（命中复用，便宜）。
 
-## jobs.ts 升级（#21 预留位兑现）
+## jobs 落库与运行期句柄（#28 重新讨论）
 
-任务表**仍是内存 `Map`**（不建 DB 表、不随重启持久——#21 决定不翻）。升级点 = 计划快照 + 逐行进度 + 取消控制：
+任务**落库 `synthesis_jobs` 表**（#28 重新讨论，替代原「内存 `Map`、不建表」#21 定案）：任务创建插行，状态迁移落库（逐行进度随迁移/节流写，不逐行一写）。可持久化状态在 DB，不可持久化的运行期句柄留进程内、按 jobId 关联：
 
 ```ts
-type SynthesisJob = {
+type SynthesisJobRow = {            // synthesis_jobs 表（drizzle）
   id: string; episodeId: string;
-  status: 'pending'|'running'|'canceling'|'succeeded'|'failed'|'canceled';
+  status: 'pending'|'running'|'canceling'|'succeeded'|'failed'|'canceled'|'interrupted';
   stage: 'tts'|'post'|'encode'|'verify'|null;
-  plan: string[];                       // 启动时快照的有序 lineIds
-  doneLineIds: Set<string>;
+  plan: string[];                   // 启动时快照的有序 lineIds（jsonb）
+  doneLineIds: string[];            // 累积（jsonb）；含命中复用
   currentLine: { lineId: string; serial: string } | null;
-  cancelRequested: boolean;
-  abort: AbortController;               // 中止在途 TTS fetch
-  artifact?: object; error?: object;
+  error: object | null;             // {code, message, lineId?, serial?}
+  createdAt: Date; updatedAt: Date;
 }
+// 进程内运行态（Map<jobId, …>，重启即失，不落库）：
+type JobRuntime = { cancelRequested: boolean; abort: AbortController }
 ```
 
-跑批循环与 post 流水线接收 `(job, signal)`，在**行间 / ffmpeg 步间**检查 `cancelRequested`；M6 落地内容即本文。
+跑批循环与 post 流水线接收 `(job, signal)`，在**行间 / ffmpeg 步间**检查 `cancelRequested`。
+
+**分期落点**：落库、`interrupted`、行级 preview 互斥随 **M5** 落地——M5 引入异步任务时，并发守卫与重启语义就必须存在；`cancel` 端点、逐行载荷增强、active-job 端点及其 `interrupted` 横幅照旧 **M6**。
 
 ## 与 ADR / 边界的对齐
 
@@ -139,11 +149,12 @@ type SynthesisJob = {
 - **ADR-0006**：素材逐行独立落盘与复用，是「取消保留部分素材」的根据。
 - **ADR-0005**：SSE 仍只属于写稿会话；合成是确定性流水线，用轮询——传输层分界与 AI/非 AI 分界一致。
 - **#19**：最小轮询形状全保留，本文是其超集；`SYNTH_FAILED` 错误码细化为三个。
-- **#20/#21**：`useSynthesisJob` 轮询消费与 jobs.ts 内存表照本文升级；落地期在 M6。
+- **#20/#21**：`useSynthesisJob` 轮询消费照本文升级（M6）；jobs 存储原 #21 内存表定案由 #28 重新讨论改为落库，编排形态进程内不变。
 
 ## 实现阶段验证项（未确证 / 待验证）
 
 1. **TTS fetch 中止的清理路径**：`AbortController` 中止 DashScope 请求后不写文件、不计数、循环不因未处理 rejection 崩溃（素材只在完整收到 body 后经临时文件→rename 落盘）。
 2. **TTS 单行重试的适用面**：超时/网络错误/5xx/429 重试 1 次、4xx 直接失败——与 M4 调通时核对到的 DashScope 错误码对齐。
 3. **ffmpeg 协作取消的延迟实测**：post 各步必须是独立子进程调用（旗标落在步间）；长单集 loudnorm 两遍可能 10–30 s，若取消延迟超预期，再给在途步加进程终止 + 临时文件清理（备选方案，默认不做）。
-4. **重启丢任务的收场**：404 路径前端停轮询 + 刷产物，不残留幽灵进度条。
+4. **重启收场**：启动时把非终态任务行标 `interrupted` 的迁移路径；前端轮询到 `interrupted` 停轮询 + 刷产物，不残留幽灵进度条；active-job 对 `interrupted` 的返回与横幅（M6）。
+5. **进程退出时 ffmpeg 子进程清理**（Windows 上父进程死亡不自动杀子进程）与启动时清理上次崩溃残留的任务临时目录。

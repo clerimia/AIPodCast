@@ -54,7 +54,7 @@ server/
         service.ts                  # synthesizeLine（preview/批量共用）+ 整集编排 + 任务状态
         tts.ts                      # DashScope qwen3-tts-instruct-flash HTTP fetch → wav 24k mono
         asset.ts                    # audio_assets 命中/回填；MEDIA_ROOT 原子写（临时文件→rename）
-        jobs.ts                     # 内存任务表：jobId → {status, stage, doneLines, totalLines, error}
+        jobs.ts                     # 合成任务编排：synthesis_jobs 表落库 + 进程内运行态（AbortController/取消旗标）
       post/                         # 后期流水线（纯 ffmpeg，文件进文件出）
         pipeline.ts                 # atempo→gap→concat→loudnorm 两遍→时间戳→验证→mp3（audio-params.md 七步）
         gaps.ts  verify.ts          # 停顿档位表；ffprobe 确定性验证（≤150ms 容差、时间戳单调）
@@ -80,9 +80,9 @@ server/
 1. **依赖方向单向**：`writer → script`（工具进程内直调服务层函数）；`synthesis → script`（读行）+ `post`（拼 master）+ `tts`；`script` 不依赖任何音频模块（作废素材 = 事务内删 `audio_assets` 行，一个 DB 操作，不调 synthesis）；`artifacts` 只读。
 2. **ChangeSet→会话通知的编排放路由层**：`POST /changes` 路由先 `script.service.applyChanges`（事务），成功后再 `writer.session.notifyChangeSet`（会话存在且 idle 时 `sendCustomMessage(triggerTurn:false)`）——script 服务不 import writer，避免环。
 3. **preview 与整集共用 `synthesizeLine`**（ADR-0006）：命中素材直接返回，未命中 TTS 后回填；整集 job 循环调它。
-4. **合成任务表在内存**（`Map`）：单进程单用户 MVP 足够；进程重启丢任务句柄可接受（前端重拉 artifact 恢复）。#22 若引入取消/细粒度进度，先升级这里。
+4. **合成任务落库 `synthesis_jobs`**（#28 重新讨论，替代原「内存 `Map`」定案）：任务创建插行、状态迁移落库，重启时非终态孤儿行标 `interrupted`（终态，不自动续跑——重新合成命中素材复用）；运行期句柄（AbortController/取消旗标）留进程内。**编排形态仍为进程内 async 循环**：TTS fetch + ffmpeg 子进程全是 I/O、无 CPU 密集段，不引入队列/worker 进程/任务库（#28 定案）。#22 的取消/细粒度进度照旧 M6。
 5. **媒体目录**照 data-model-draft.md：`media/ws-{id}/ep-{id}/assets/{lineId}.wav`、`.../artifacts/{master.mp3,transcript.json,notes.md}`；先写临时文件再原子 rename。
-6. **drizzle 迁移只建有业务路径的表**：workspaces、show_metadata、speakers、episodes、script_lines、change_sets、change_set_ops、audio_assets、post_rules、conversations、artifacts。**不建** `messages`（地图出界）与 `asset_library`（素材库出界，无读写路径；ADR-0006 预留在数据模型文档层，不等于建表）。
+6. **drizzle 迁移只建有业务路径的表**：workspaces、show_metadata、speakers、episodes、script_lines、change_sets、change_set_ops、audio_assets、post_rules、conversations、artifacts、synthesis_jobs。**不建** `messages`（地图出界）与 `asset_library`（素材库出界，无读写路径；ADR-0006 预留在数据模型文档层，不等于建表）。
 
 ## 实现顺序/分期
 
@@ -110,7 +110,7 @@ flowchart LR
 | **M2 脚本与暂存门** | script 模块：GET script、POST /changes（事务 + ChangeSet + 作废素材 + serial 重编）、post 参数两 PATCH | EpisodePage 上下两半布局骨架 + script-panel（staging store、暂存条、`applyOps` 单测）；会话通知路由编排此处接好（writer 未上，空实现） | 手动加行→暂存编辑→提交：serial 重编、刷新持久；无 AI 也能管脚本 |
 | **M3 写稿大师 SSE** | **先 spike**：进程内嵌 PI SDK 最小 read 调用（验 #19 验证项 1 + DashScope compat 参数）；writer 模块全套（Map 懒创建会话、三工具、Layer3 静态种子+Layer2 每轮覆盖第六层 prompt、SSE 映射、abort、history） | writer-chat feature：useWriterRun + SSE 手解、气泡流、运行状态条、`script:changed` 防抖失效、停止按钮 | 「写段开场白」→ 流式气泡 + 工具状态条 + 脚本行实时刷新落库——语言生成核心链路通 |
 | **M4 单行合成·试听** | **先最小调通** tts.ts（请求体 `input{text,voice,language_type,instructions}` → wav 24k mono）；asset 命中/回填；preview 同步端点；/media Range 流式 | audio-workspace 上半：试听按钮 + 播单行 wav、「需重新合成」标记（invalidatedLineIds）、停顿/语速下拉（PATCH 两端点） | 点试听听声音；改台词提交后行标「需重新合成」；停顿/语速落库即时生效 |
-| **M5 整集合成·产物** | post 流水线七步（audio-params.md）；synthesis 异步编排 + 内存 jobs；synthesize 202 + synthesis-jobs + artifact；产物整包替换（验证失败保留旧产物） | MasterPlayer + useSynthesisJob 轮询（refetchInterval 2s）+ transcript 行级高亮 + 整集合成按钮 + **合成前自动提交**编排（ensureCommitted） | **端到端闭环**：对话写稿→提交改动→试听→整集合成→播 master + 行级高亮。MVP 达成 |
+| **M5 整集合成·产物** | post 流水线七步（audio-params.md）；synthesis 异步编排 + `synthesis_jobs` 落库（重启孤儿任务标 `interrupted`；行级 preview 互斥）；synthesize 202 + synthesis-jobs + artifact；产物整包替换（验证失败保留旧产物） | MasterPlayer + useSynthesisJob 轮询（refetchInterval 2s）+ transcript 行级高亮 + 整集合成按钮 + **合成前自动提交**编排（ensureCommitted） | **端到端闭环**：对话写稿→提交改动→试听→整集合成→播 master + 行级高亮。MVP 达成 |
 | **M6 收尾（无新功能）** | 错误路径打磨（preview 失败语义与超时，#19 验证项 3）；#22 决议落地（进度/取消扩展 jobs） | 流式气泡合帧、`<audio>` seek 高亮漂移（#20 验证项）；toast/重试补齐；启动文档 | MVP 打磨完成，交付 |
 
 ## 与 ADR / 边界的对齐

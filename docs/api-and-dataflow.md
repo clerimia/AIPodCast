@@ -145,7 +145,7 @@ flowchart LR
 | POST | `/api/episodes/:episodeId/synthesize` | **整集合成**（异步）：确定性流水线 → 替换产物，返回任务句柄 |
 | GET | `/api/synthesis-jobs/:jobId` | 合成任务状态（前端轮询） |
 | POST | `/api/synthesis-jobs/:jobId/cancel` | 取消合成任务（#22）：协作式中止，已落盘素材保留、旧产物不动 |
-| GET | `/api/episodes/:episodeId/synthesis-job` | 当前活跃合成任务快照，无则 404（#22，页面重载后恢复轮询） |
+| GET | `/api/episodes/:episodeId/synthesis-job` | 当前活跃合成任务快照；无活跃任务但存在最近一次 `interrupted` 任务则返回它；否则 404（#22，页面重载后恢复轮询；重启语义见 synthesis-progress-and-cancel.md） |
 | GET | `/api/episodes/:episodeId/artifact` | 最新产物元数据 + 行级文稿（播放器据此高亮） |
 | GET | `/api/media/:wsId/:episodeId/assets/:lineId` | 单行素材 wav（试听播放） |
 | GET | `/api/media/:wsId/:episodeId/artifacts/:file` | 产物文件：`master.mp3` / `transcript.json` / `notes.md` |
@@ -156,7 +156,7 @@ flowchart LR
 
 ```jsonc
 {
-  "status": "pending|running|succeeded|failed",
+  "status": "pending|running|succeeded|failed|interrupted",  // interrupted = 进程重启中断（任务落库，#28）
   "stage": "tts|post|encode|verify",   // 最小进度：只报阶段，不做细粒度
   "doneLines": 12, "totalLines": 40,
   "artifact": { /* 与 GET artifact 同形，succeeded 时 */ },
@@ -164,7 +164,7 @@ flowchart LR
 }
 ```
 
-> 长时间任务的**细粒度进度与取消**已定案（[#22](https://github.com/clerimia/AIPodCast/issues/22)）：继续轮询不上 SSE，载荷增强为逐行（`doneLineIds`/`currentLine`），状态机加 `canceling/canceled`，新增 cancel 与 active-job 端点。见 `docs/synthesis-progress-and-cancel.md`；上方 `GET /synthesis-jobs/:jobId` 的最小形状是其子集，`SYNTH_FAILED` 错误码由 `SYNTH_LINE_FAILED`/`SYNTH_POST_FAILED`/`SYNTH_VERIFY_FAILED` 取代。
+> 任务落 `synthesis_jobs` 表（#28 重新讨论）：进程内 async 编排、不引入队列/worker；重启后非终态孤儿任务启动时标 `interrupted`。长时间任务的**细粒度进度与取消**已定案（[#22](https://github.com/clerimia/AIPodCast/issues/22)）：继续轮询不上 SSE，载荷增强为逐行（`doneLineIds`/`currentLine`），状态机加 `canceling/canceled`，新增 cancel 与 active-job 端点；合成期间该集 preview 为行级互斥（仅正在合成或排队中的行 409）。见 `docs/synthesis-progress-and-cancel.md`；上方 `GET /synthesis-jobs/:jobId` 的最小形状是其子集，`SYNTH_FAILED` 错误码由 `SYNTH_LINE_FAILED`/`SYNTH_POST_FAILED`/`SYNTH_VERIFY_FAILED` 取代。
 
 - `GET /artifact` 返回：`{ id, createdAt, durationMs, size, audioUrl, transcriptUrl, notesUrl, transcript: [{ serial, speakerName, text, startMs, endMs }], notes: "单集简介文本或 null" }`。行级文稿是**快照**（ADR-0008），播放器一次读全量，不回 DB 按行查。
 
