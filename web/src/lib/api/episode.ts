@@ -1,7 +1,8 @@
 // 单集侧端点（#19「单集与脚本」+「后期参数」+「试听/整集合成/产物」表）：脚本读、
-// 暂存/确认门提交、后期参数直写、单行试听。
+// 暂存/确认门提交、后期参数直写、单行试听、整集合成任务（M5）与产物。
 import { http } from './http'
 import type {
+  Artifact,
   ChangesRequest,
   ChangesResponse,
   EpisodeDetail,
@@ -9,6 +10,8 @@ import type {
   PostRules,
   PreviewResponse,
   Script,
+  StartSynthesisResponse,
+  SynthesisJob,
 } from './types'
 
 export const episodeApi = {
@@ -33,4 +36,13 @@ export const episodeApi = {
   /** 试听 = 单行合成（同步，ADR-0006）：命中素材直接返回，未命中 TTS 后回填；force 强制重生成 */
   preview: (episodeId: string, lineId: string, force = false) =>
     http.post<PreviewResponse>(`/episodes/${episodeId}/lines/${lineId}/preview`, force ? { force: true } : undefined),
+
+  /** 整集合成（M5）：异步任务，202 返回 jobId + statusUrl；同集已有活跃任务 → 409 */
+  synthesize: (episodeId: string) => http.post<StartSynthesisResponse>(`/episodes/${episodeId}/synthesize`),
+
+  /** 合成任务轮询（GET /synthesis-jobs/:jobId）：status/stage/doneLines/totalLines + 终态 error */
+  getSynthesisJob: (jobId: string) => http.get<SynthesisJob>(`/synthesis-jobs/${jobId}`),
+
+  /** 产物（master mp3 + transcript + notes）；尚未合成 → 404（调用方按需吞成 null） */
+  getArtifact: (episodeId: string) => http.get<Artifact>(`/episodes/${episodeId}/artifact`),
 }

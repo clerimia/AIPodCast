@@ -138,8 +138,16 @@ export interface ChangesResponse {
 
 // ---- 合成与产物 ----
 export type SynthesisStage = 'tts' | 'post' | 'encode' | 'verify'
-/** #22：状态机含 canceling/canceled 两段式取消 */
-export type SynthesisStatus = 'pending' | 'running' | 'canceling' | 'succeeded' | 'failed' | 'canceled'
+/** #22：状态机含 canceling/canceled 两段式取消；#28：interrupted = 进程重启收场（终态） */
+export type SynthesisStatus = 'pending' | 'running' | 'canceling' | 'succeeded' | 'failed' | 'canceled' | 'interrupted'
+
+/** 任务失败原因（synthesis_jobs.error jsonb）；行失败带 lineId/serial 定位 */
+export interface SynthesisJobError {
+  code: string
+  message: string
+  lineId?: string
+  serial?: string
+}
 
 export interface TranscriptEntry {
   serial: string
@@ -171,7 +179,7 @@ export interface SynthesisJob {
   doneLineIds: string[]
   currentLine: { lineId: string; serial: string } | null
   artifact: Artifact | null
-  error: string | null
+  error: SynthesisJobError | null
 }
 
 /** POST /lines/:lineId/preview */

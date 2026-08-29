@@ -12,7 +12,8 @@ import { useStaging } from '@/stores/staging'
 // 「听到的 ≠ 看到的」。提交结果与暂存条手动提交同构：清 store、直写 script 缓存、
 // invalidatedLineIds 写入 invalidated 缓存（行上「需重新合成」据此点亮）。
 // 返回 false = 暂存有阻断（空新增行）或提交失败，调用方应中止合成。
-export function useEnsureCommitted(episodeId: string) {
+// label 是触发动作名（试听 / 整集合成），只影响提示文案。
+export function useEnsureCommitted(episodeId: string, label = '试听') {
   const queryClient = useQueryClient()
 
   return async (): Promise<boolean> => {
@@ -23,7 +24,7 @@ export function useEnsureCommitted(episodeId: string) {
 
     const blocker = commitBlocker(ops)
     if (blocker) {
-      toast.error(`暂存改动未就绪：${blocker}`, { description: '处理完暂存改动再试听' })
+      toast.error(`暂存改动未就绪：${blocker}`, { description: `处理完暂存改动再${label}` })
       return false
     }
 
@@ -35,8 +36,8 @@ export function useEnsureCommitted(episodeId: string) {
       clearAll(episodeId)
       queryClient.setQueryData(qk.script(episodeId), { lines: res.lines } satisfies Script)
       queryClient.setQueryData(qk.invalidated(episodeId), res.invalidatedLineIds)
-      toast.info(`试听前已自动提交 ${ops.length} 处暂存改动`, {
-        description: '试听合成的是已提交入库的稿子',
+      toast.info(`${label}前已自动提交 ${ops.length} 处暂存改动`, {
+        description: '合成只认已提交入库的稿子',
       })
       return true
     } catch (e) {

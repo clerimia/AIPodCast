@@ -13,14 +13,17 @@ import type { LinePost, Script, ScriptLine } from '@/lib/api/types'
 // 不镜像全文（全文在写稿视图），不放播放器（停顿/语速是拼接层参数，单行试听
 // 听不出来，听到效果要等 M5 master；播放动作在写稿视图的行内联试听）。
 // 覆盖直 PATCH /lines/:id/post、不经门（ADR-0004），「集级」回退项选中即清覆盖。
+// synthState（M5）：整集合成 tts 阶段的行级进度（进行中/已完成）。
 export function PostLineRow({
   episodeId,
   line,
   invalidated,
+  synthState,
 }: {
   episodeId: string
   line: ScriptLine
   invalidated: boolean
+  synthState?: 'done' | 'current' | null
 }) {
   const queryClient = useQueryClient()
 
@@ -54,6 +57,13 @@ export function PostLineRow({
       <SerialBadge serial={line.serial} />
       <span className="shrink-0 text-xs text-muted-foreground">{line.speakerName}</span>
       <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{line.text}</span>
+      {synthState === 'current' && (
+        <span className="inline-flex items-center gap-1 text-xs text-primary">
+          <span className="size-1.5 animate-pulse rounded-full bg-primary" />
+          合成中
+        </span>
+      )}
+      {synthState === 'done' && <span className="text-xs text-emerald-600">✓</span>}
       {status}
       <PauseSpeedSelect withFollowDefault value={line.post} onChange={(patch) => void patchPost(patch)} />
     </div>
