@@ -176,7 +176,7 @@ export interface SynthesisJob {
 
 /** POST /lines/:lineId/preview */
 export interface PreviewResponse {
-  asset: { id: string; url: string; durationMs: number }
+  asset: { id: string; url: string; durationMs: number | null }
 }
 
 /** POST /episodes/:id/synthesize */

@@ -1,4 +1,5 @@
-// 单集侧端点（#19「单集与脚本」+「后期参数」表）：脚本读、暂存/确认门提交、后期参数直写。
+// 单集侧端点（#19「单集与脚本」+「后期参数」+「试听/整集合成/产物」表）：脚本读、
+// 暂存/确认门提交、后期参数直写、单行试听。
 import { http } from './http'
 import type {
   ChangesRequest,
@@ -6,6 +7,7 @@ import type {
   EpisodeDetail,
   LinePost,
   PostRules,
+  PreviewResponse,
   Script,
 } from './types'
 
@@ -24,7 +26,11 @@ export const episodeApi = {
   updatePostRules: (episodeId: string, body: Partial<PostRules>) =>
     http.patch<PostRules>(`/episodes/${episodeId}/post-rules`, body),
 
-  /** 逐行后期覆盖：字段给 null 清除覆盖；同样不经门（M4 消费） */
+  /** 逐行后期覆盖：字段给 null 清除覆盖；同样不经门 */
   updateLinePost: (episodeId: string, lineId: string, body: LinePost) =>
     http.patch<LinePost>(`/episodes/${episodeId}/lines/${lineId}/post`, body),
+
+  /** 试听 = 单行合成（同步，ADR-0006）：命中素材直接返回，未命中 TTS 后回填；force 强制重生成 */
+  preview: (episodeId: string, lineId: string, force = false) =>
+    http.post<PreviewResponse>(`/episodes/${episodeId}/lines/${lineId}/preview`, force ? { force: true } : undefined),
 }

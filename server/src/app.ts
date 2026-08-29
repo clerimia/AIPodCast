@@ -1,7 +1,10 @@
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify'
+import { artifactsRoutes } from './modules/artifacts/routes.js'
 import { createDb, type Db } from './db/client.js'
 import { healthRoutes } from './modules/health/routes.js'
 import { scriptRoutes } from './modules/script/routes.js'
+import { synthesisRoutes } from './modules/synthesis/routes.js'
+import { makeDashscopeTts, type TtsClient } from './modules/synthesis/tts.js'
 import { writerRoutes } from './modules/writer/routes.js'
 import { WriterRuntime } from './modules/writer/session.js'
 import { workspaceRoutes } from './modules/workspaces/routes.js'
@@ -12,12 +15,18 @@ declare module 'fastify' {
   interface FastifyInstance {
     db: Db
     writer: WriterRuntime
+    mediaRoot: string
+    tts: TtsClient
   }
 }
 
 export interface BuildAppOptions {
   /** 覆盖 DATABASE_URL（测试/多实例用） */
   databaseUrl?: string
+  /** 覆盖 MEDIA_ROOT（测试隔离临时目录用） */
+  mediaRoot?: string
+  /** 覆盖 TTS 客户端（测试注入 stub 用） */
+  tts?: TtsClient
 }
 
 // Fastify 组装：插件、路由注册、统一错误形状（M4 起在此加 media 静态服务）
@@ -28,6 +37,10 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
 
   const db = createDb(opts.databaseUrl ?? env.databaseUrl)
   app.decorate('db', db)
+
+  // 媒体根（素材/产物落盘与流式共用）；TTS 客户端（synthesis 用，测试可注 stub）
+  app.decorate('mediaRoot', opts.mediaRoot ?? env.mediaRoot)
+  app.decorate('tts', opts.tts ?? makeDashscopeTts())
 
   // 写稿运行时（Map<episodeId, AgentSession>）；进程退出统一 dispose（ADR-0005/配方 §3.3）
   const writer = new WriterRuntime(db)
@@ -69,7 +82,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(healthRoutes, { prefix: '/api' })
   await app.register(workspaceRoutes, { prefix: '/api/workspaces' })
   await app.register(scriptRoutes, { prefix: '/api/episodes' })
+  await app.register(synthesisRoutes, { prefix: '/api/episodes' })
   await app.register(writerRoutes, { prefix: '/api/episodes' })
+  await app.register(artifactsRoutes, { prefix: '/api' })
 
   return app
 }

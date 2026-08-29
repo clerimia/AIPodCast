@@ -4,12 +4,13 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "migrate": "tsx src/db/migrate.ts",
     "db:generate": "drizzle-kit generate",
     "test": "tsx --test test/*.test.ts",
-    "spike": "tsx scripts/spike-pi-embed.ts"
+    "spike": "tsx scripts/spike-pi-embed.ts",
+    "spike-tts": "tsx scripts/spike-tts.ts"
   },
   "engines": {
     "node": ">=22.19"
