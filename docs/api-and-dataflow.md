@@ -177,7 +177,8 @@ flowchart LR
 | GET | `/api/episodes/:episodeId/writer/history` | 页面重载时回放会话历史（解析 session JSONL） |
 
 - `POST writer/messages`：请求体 `{ "text": "…" }`。后端 `session.prompt(text)`，把 `session.subscribe` 的事件映射成浏览器事件词汇后以 `text/event-stream` 返回，直到 `done`（`agent_settled`）才结束流。
-- **会话生命周期**：一集一会话（ADR-0005）。会话 id = episodeId（PI SDK `SessionManager.create(cwd, dir, { id: episodeId })` 确定性映射），`session.sessionFile` 存 `conversations.session_file`（#16 配方）。**首次** `writer/messages` 时懒创建会话文件；后续调用 `SessionManager.open(session_file)` 恢复。
+- **会话生命周期**：一集一会话（ADR-0005）。后端进程内持有一张 `Map<episodeId, AgentSession>`（不用 `createAgentRuntime`--它单当前会话是 CLI 形态，而 `abort` 与 ChangeSet 通知逼会话跨请求驻留、天然并发）。`modelRuntime`+`settingsManager` 共享单例；每集懒建：命中 Map 复用，未命中则按 `conversations.session_file` 走 `SessionManager.open(session_file)` 恢复、无则 `SessionManager.create(cwd, SESSIONS_DIR, { id: episodeId })` 新建并落库 `session_file`。每个会话带自己的 per-episode `ResourceLoader` + `SessionManager(id=episodeId)` + `customTools`（闭包持有该集 script service）。详见 `docs/research/pi-sdk-embedding-recipe.md` §3.3、#26 重新讨论定案。
+- **system prompt 组装**：Layer 3（`getSystemPrompt`，建会话时算一次，缓存为 `_baseSystemPrompt`）= 前五层静态身份 + 关 discovery（隔离项目扩展/AGENTS.md），`buildSystemPrompt` 自动追加工具段（read/add/edit）；Layer 2（`before_agent_start`，每轮）= 第六层覆盖当前 DB 节目元数据 + 说话人快照到末尾（覆盖、不累加）。**注意**：`getSystemPrompt` 非每轮调用，每轮动态拼 prompt 的钩子是 `before_agent_start`（见配方 §6.0）。缓存按内容哈希、前缀缓存：元数据没改整条逐字节相同命中，改了仅末尾第六层 miss。
 - **history**：`messages` 表本期不建，历史在 JSONL 里。后端读 `session.sessionFile` 解析成浏览器友好列表（`[{ role:"user"|"assistant", text, toolCalls?:[{tool, summary}] }]`）返回。`change_set` 自定义消息（`display:false`）不回放进聊天流。条目结构实现时按 `SessionEntry`（`entry_appended` 事件的 payload）对齐。
 
 ## SSE 事件协议
@@ -321,7 +322,8 @@ sequenceDiagram
 
 ## 实现阶段验证项（未确证 / 待验证）
 
-1. PI SDK 对 DashScope OpenAI 兼容端点「非流式强制工具调用返回 `finish_reason:"stop"` 但带 `tool_calls`」的处理：probe 确认了端点行为，SDK 层需以 `tool_calls` 判定工具调用（#15）。实现时先跑一次最小 `read` 工具调用，确认 `tool_execution_start` 真的发出。
+1. PI SDK 对 DashScope OpenAI 兼容端点「非流式强制工具调用返回 `finish_reason:"stop"` 但带 `tool_calls`」的处理：probe 确认了端点行为，SDK 层需以 `tool_calls` 判定工具调用（#15）。实现时先跑一次最小 `read` 工具调用，确认 `tool_execution_start` 真的发出。会话走 `Map<episodeId, AgentSession>` 懒建 + per-episode loader 路径（非裸 `createAgentSession`）。
+5. **Layer 2 每轮覆盖生效**：改了设置页元数据（节目元数据/说话人）后，下一轮 `prompt` 的 system prompt 末尾含新值（验 `before_agent_start` handler 真的每轮被调、读 DB 拼第六层）；并确认元数据未改时提示词逐字节不变、命中缓存。详见配方 §6.3 验证项 4/5。
 2. `history` 端点的 JSONL 条目结构（`SessionEntry` 具体字段）实现时对齐 `entry_appended` 事件 payload，按需过滤 `change_set` 等 `display:false` 消息。
 3. 同步 `preview` 的请求超时与失败语义：TTS 失败时返回 `{ error }` 而非 5xx 吞掉；前端行上给重试。
 4. DashScope 专属端点是否接受 pi 默认 `developer` role / `reasoning_effort`（#16 附注），必要时 `compat.supportsDeveloperRole:false`、`supportsReasoningEffort:false`、`thinkingFormat:"qwen"`。

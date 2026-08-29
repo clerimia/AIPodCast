@@ -45,9 +45,9 @@ server/
         routes.ts  service.ts
         apply-ops.ts                # ops 应用纯函数（add/edit/delete/reorder → serial 重编，可单测）
       writer/                       # 写稿大师运行时（PI SDK 进程内嵌入）
-        session.ts                  # 会话生命周期：懒创建/恢复（id=episodeId）/abort；conversations 行
+        session.ts                  # 会话生命周期：Map<episodeId,AgentSession> 懒创建/恢复（id=episodeId）/abort；conversations 行
         tools.ts                    # read/add/edit（TypeBox 参数；只调 script service 文本层函数）
-        context.ts                  # system prompt 六层组装（#17：静态层 + 节目元数据/说话人快照）
+        context.ts                  # system prompt：Layer 3 静态种子（前五层）+ 关 discovery；Layer 2 before_agent_start 每轮覆盖第六层（DB 元数据）
         sse.ts                      # PI 事件 → 浏览器事件词汇（#19 映射表）
         history.ts                  # JSONL → history 列表（过滤 display:false）
       synthesis/                    # 合成编排（确定性，非 AI）
@@ -70,7 +70,7 @@ server/
 |---|---|---|
 | workspaces | 工作间/节目元数据/说话人/单集 CRUD（#19 表 1）；建单集连带 conversations + post_rules 默认行 | 不碰脚本/音频/会话 |
 | script | GET script；POST /changes（事务：ops→script_lines + change_sets/ops + 作废素材）；post 参数两个 PATCH | 不碰 TTS/ffmpeg；不 import writer |
-| writer | POST writer/messages（响应即 SSE）、abort、history；三工具 + 六层 prompt + 事件映射 | 工具只达 script service 文本层——**ADR-0005 边界靠依赖方向兑现**，够不到 synthesis/post/artifacts |
+| writer | POST writer/messages（响应即 SSE）、abort、history；三工具 + Layer3 静态种子/Layer2 每轮覆盖第六层 prompt + 事件映射 | 工具只达 script service 文本层——**ADR-0005 边界靠依赖方向兑现**，够不到 synthesis/post/artifacts |
 | synthesis | preview（同步单行）、synthesize（异步 202）、synthesis-jobs 轮询；逐行取/合成素材 | 不自己跑 ffmpeg（调 post）；不是 AI 会话 |
 | post | 纯流水线：素材文件 + 参数 → master + transcript | 无 DB 访问、无 DashScope——纯函数易测 |
 | artifacts | GET artifact、/media Range 流式 | 不写业务状态 |
@@ -108,7 +108,7 @@ flowchart LR
 | **M0 仓库骨架与数据层** | workspaces 根编排；`server/` Fastify + drizzle + compose(Postgres 17) + health；env 加载；**全部 drizzle 迁移** | `web/` Vite 脚手架（#20 全套：router / TanStack Query / Zustand / shadcn / `lib/api` 骨架）+ proxy→3000 | 两端起得来，health 通，迁移跑过 |
 | **M1 工作间配置** | workspaces 模块全套（#19 表 1：工作间/元数据/说话人/单集 CRUD，含删除说话人 409） | HomePage（列表/建工作间/建单集进入）+ WorkspaceSettingsPage（元数据表单 + 说话人增删改） | 建工作间→建说话人→建单集，刷新不丢 |
 | **M2 脚本与暂存门** | script 模块：GET script、POST /changes（事务 + ChangeSet + 作废素材 + serial 重编）、post 参数两 PATCH | EpisodePage 上下两半布局骨架 + script-panel（staging store、暂存条、`applyOps` 单测）；会话通知路由编排此处接好（writer 未上，空实现） | 手动加行→暂存编辑→提交：serial 重编、刷新持久；无 AI 也能管脚本 |
-| **M3 写稿大师 SSE** | **先 spike**：进程内嵌 PI SDK 最小 read 调用（验 #19 验证项 1 + DashScope compat 参数）；writer 模块全套（会话懒创建、三工具、六层 prompt、SSE 映射、abort、history） | writer-chat feature：useWriterRun + SSE 手解、气泡流、运行状态条、`script:changed` 防抖失效、停止按钮 | 「写段开场白」→ 流式气泡 + 工具状态条 + 脚本行实时刷新落库——语言生成核心链路通 |
+| **M3 写稿大师 SSE** | **先 spike**：进程内嵌 PI SDK 最小 read 调用（验 #19 验证项 1 + DashScope compat 参数）；writer 模块全套（Map 懒创建会话、三工具、Layer3 静态种子+Layer2 每轮覆盖第六层 prompt、SSE 映射、abort、history） | writer-chat feature：useWriterRun + SSE 手解、气泡流、运行状态条、`script:changed` 防抖失效、停止按钮 | 「写段开场白」→ 流式气泡 + 工具状态条 + 脚本行实时刷新落库——语言生成核心链路通 |
 | **M4 单行合成·试听** | **先最小调通** tts.ts（请求体 `input{text,voice,language_type,instructions}` → wav 24k mono）；asset 命中/回填；preview 同步端点；/media Range 流式 | audio-workspace 上半：试听按钮 + 播单行 wav、「需重新合成」标记（invalidatedLineIds）、停顿/语速下拉（PATCH 两端点） | 点试听听声音；改台词提交后行标「需重新合成」；停顿/语速落库即时生效 |
 | **M5 整集合成·产物** | post 流水线七步（audio-params.md）；synthesis 异步编排 + 内存 jobs；synthesize 202 + synthesis-jobs + artifact；产物整包替换（验证失败保留旧产物） | MasterPlayer + useSynthesisJob 轮询（refetchInterval 2s）+ transcript 行级高亮 + 整集合成按钮 + **合成前自动提交**编排（ensureCommitted） | **端到端闭环**：对话写稿→提交改动→试听→整集合成→播 master + 行级高亮。MVP 达成 |
 | **M6 收尾（无新功能）** | 错误路径打磨（preview 失败语义与超时，#19 验证项 3）；#22 决议落地（进度/取消扩展 jobs） | 流式气泡合帧、`<audio>` seek 高亮漂移（#20 验证项）；toast/重试补齐；启动文档 | MVP 打磨完成，交付 |
@@ -124,7 +124,7 @@ flowchart LR
 
 ## 实现阶段验证项（未确证 / 待验证）
 
-1. **PI SDK 嵌入 spike（M3 第一件事）**：`tool_execution_start` 是否真发出；DashScope 专属端点对 `developer` role / `reasoning_effort` 的接受度（`compat.supportsDeveloperRole` 等，#16 附注）。
+1. **PI SDK 嵌入 spike（M3 第一件事）**：会话走 `Map<episodeId, AgentSession>` 懒建 + per-episode loader（非裸 `createAgentSession`）。`tool_execution_start` 是否真发出；DashScope 专属端点对 `developer` role / `reasoning_effort` 的接受度（`compat.supportsDeveloperRole` 等，#16 附注）。另验 Layer 2：改设置页元数据后下一轮 prompt 末尾含新值、未改时逐字节不变命中缓存（`before_agent_start` 每轮覆盖第六层生效）。
 2. **TTS 最小调用（M4 第一件事）**：`input` 四字段请求与返回形态（流/文件）按 `docs/research/qwen3-tts-instruct-flash.md` 对齐；错误码语义。
 3. **ffmpeg 8.x 的 loudnorm 两遍线性**：`linear=true` 传递方式与 print_format JSON 解析。
 4. **preview 同步超时**：Fastify 路由级超时设置；TTS 失败返回 `{error}` 不吞 5xx。
