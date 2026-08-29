@@ -6,7 +6,7 @@
 
 ## 一句话
 
-一个 Vite 应用落在仓库根的 `web/`，**路由上只有三个页面**：工作间列表（脚手架）、**编辑页**（写稿大师聊天与脚本行在上半区、音频工作区在下半区——CONTEXT.md 的「编辑页是用户的工作台」）、工作间设置；数据层用 **TanStack Query 管全部 REST 服务端状态**（SSE 事件只负责触发缓存失效），**Zustand 只装两份纯客户端状态**（暂存门缓冲、写稿运行态），API 客户端是**手写类型的薄 fetch 封装**，SSE 用 fetch + ReadableStream 手解（POST 请求即流，EventSource 不可用）。
+一个 Vite 应用落在仓库根的 `web/`，**路由上只有三个页面**：工作间列表（脚手架）、**编辑页**（左栏「写稿 / 后期」视图切换、右侧写稿大师聊天——CONTEXT.md 的「编辑页是用户的工作台」，#30 改同页视图切换）、工作间设置；数据层用 **TanStack Query 管全部 REST 服务端状态**（SSE 事件只负责触发缓存失效），**Zustand 只装两份纯客户端状态**（暂存门缓冲、写稿运行态），API 客户端是**手写类型的薄 fetch 封装**，SSE 用 fetch + ReadableStream 手解（POST 请求即流，EventSource 不可用）。
 
 ## 「三块」与路由的对应（先消歧）
 
@@ -16,11 +16,11 @@ CONTEXT.md：写稿大师是编辑页的 AI 会话，**编辑页是用户的工�
 |---|---|---|
 | `/` | 工作间列表（脚手架） | 列工作间 / 建工作间（`GET/POST /workspaces`） |
 | `/workspaces/:wsId` | **工作间页面**（#25 后新增：单集列表 + 建单集并进入；卡片点击即达） | 不属于三块，是工作间的落点页 |
-| `/workspaces/:wsId/episodes/:episodeId` | **编辑页** | **写稿大师聊天**（上半区）+ **音频工作区**（下半区），中间夹脚本行文本侧与暂存条 |
+| `/workspaces/:wsId/episodes/:episodeId` | **编辑页** | **写稿大师聊天**（右侧侧边栏）+ 左栏「写稿 / 后期」视图切换（#30），暂存条横跨两视图 |
 | `/workspaces/:wsId/settings` | **工作间设置** | 节目元数据表单 + 说话人增删改 |
 
 - `wsId` 进路由是为了导航（编辑页头部跳设置），不为取数——单集数据全部走 `/api/episodes/:episodeId/*`。
-- 音频工作区不是独立路由：它常驻编辑页下半区（单行试听 / 停顿语速 / 整集合成 / master 播放 + 行级高亮）。
+- 音频工作区不是独立路由：它是编辑页左栏的「后期」视图（行级停顿/语速覆盖、素材概览；单行试听在写稿视图的脚本行上；整集合成 / master 播放 + 行级高亮 M5 落）。
 
 ## 技术选型（骨架约定）
 
@@ -49,11 +49,11 @@ web/
     features/                           # 三块各一个模块，互不 import 对方内部
       writer-chat/                      # 写稿大师聊天（上半区左：会话）
         ChatStream.tsx  Composer.tsx  RunStatusBar.tsx  useWriterRun.ts
-      script-panel/                     # 脚本行文本侧（上半区右/下：行编辑）
+      script-panel/                     # 写稿视图：脚本行编辑 + 行内联试听
         ScriptLineList.tsx  ScriptLineRow.tsx  StagingBar.tsx
         staging.ts                      # 纯函数：ops 累积 + overlay 投影（可单测）
-      audio-workspace/                  # 音频工作区（下半区）
-        AudioLineList.tsx  AudioLineRow.tsx  MasterPlayer.tsx
+      audio-workspace/                  # 后期视图（#30 重构：不再镜像脚本行列表）
+        PostView.tsx  PostLineRow.tsx  MasterPlayer.tsx
         useSynthesisJob.ts  useTranscriptHighlight.ts
       workspace-settings/
         ShowMetadataForm.tsx  SpeakerList.tsx  SpeakerDialog.tsx
@@ -78,30 +78,28 @@ web/
       utils.ts                          # cn()
 ```
 
-分层规则：**feature 私有的放 feature 内，两个 feature 都用的上浮到 `components/` + `hooks/`**；脚本行数据被上下两半共同消费，唯一真相是 Query 缓存 `['script', episodeId]`，两半各做投影、行身份用 `line.id` 对齐。
+分层规则：**feature 私有的放 feature 内，两个 feature 都用的上浮到 `components/` + `hooks/`**；脚本行数据被两个视图共同消费，唯一真相是 Query 缓存 `['script', episodeId]`，两视图各做投影、行身份用 `line.id` 对齐。
 
-## 编辑页布局（上下两半）
+## 编辑页布局（写稿 / 后期同页视图切换，#30）
 
 ```mermaid
 flowchart TB
   subgraph EP["编辑页 /workspaces/:wsId/episodes/:episodeId"]
     direction TB
     BAR["暂存条（悬浮）：N 处改动待提交 · 撤销全部 / 提交改动"]
-    subgraph TOP["上半区（文本侧）"]
-      CHAT["写稿大师聊天<br/>气泡流 + 输入框 + 运行状态条"]
-      TXT["脚本行面板（文本投影）<br/>serial · 说话人 · 台词 · 指令（可编辑，改即入暂存）"]
+    subgraph LEFT["左栏（视图切换，两视图各占满栏高）"]
+      WRITE["写稿视图：脚本行面板<br/>serial · 说话人 · 台词 · 指令（改即入暂存）<br/>行内联试听 ▶ · 需重新合成徽标 · 当前行展开播放器"]
+      POST["后期视图：素材概览 + 后期参数<br/>行级停顿/语速覆盖 · 集级默认<br/>整集合成 + master 播放器（M5）"]
     end
-    subgraph BOT["下半区（音频工作区）"]
-      AUD["脚本行音频投影<br/>试听 · 素材状态（需重新合成）· 停顿/语速下拉"]
-      MASTER["master 播放器<br/>`<audio>` + 按 transcript 高亮当前行 + 整集合成"]
-    end
+    CHAT["写稿大师聊天（右侧全高侧边栏）<br/>气泡流 + 输入框 + 运行状态条"]
   end
-  TXT ---|"同一 Query 缓存 ['script', ep]"| AUD
-  BAR -.->|"提交 = POST /changes"| TXT
+  WRITE ---|"同一 Query 缓存 ['script', ep]"| POST
+  BAR -.->|"提交 = POST /changes"| WRITE
 ```
 
-- 上下两半**各自滚动**，行身份同源（`line.id`）；同步滚动是增强，MVP 不做。
-- 文本侧行内编辑（台词/指令/说话人）**只改暂存，不改库**（ADR-0003）；音频侧的停顿/语速**直接 PATCH**、不经门（ADR-0004）——两半的"写"语义不同，这是编辑页最重要的分界。
+- 两视图**各自占满左栏高度**，行身份同源（`line.id`）；默认落在写稿视图。
+- 分工按**动作归属**（#30）：单行试听是写作时的校对动作 → 内联在写稿视图的脚本行上（未合成→先合成再播；`<audio>` 只在当前试听行展开；暂存新增行不可试听；试听前 ensureCommitted 自动提交暂存）；停顿/语速是拼接层参数（单行试听听不出来）→ 只在后期视图调，行内只放「播」、不放直写参数，保持 ADR-0003（文本过门）/ ADR-0004（参数直写）的写语义分界在视觉上同样清晰。
+- 文本侧行内编辑（台词/指令/说话人）**只改暂存，不改库**（ADR-0003）；后期视图的停顿/语速**直接 PATCH**、不经门（ADR-0004）。
 
 ## 暂存/确认门（ADR-0003）的前端交互
 
@@ -117,7 +115,7 @@ type StagedOp = ChangeOp   // 直接复用 lib/api/types.ts 的 ops 联合类型
 
 - **投影**：`staging.applyOps(base, ops)` 是纯函数——文本侧行列表渲染 = `['script',ep]` 缓存叠暂存 ops；行上给「待提交」标记。可单测，实现阶段照 ops 语义（add/edit/delete/reorder 顺序应用）写。
 - **暂存条**：`ops.length > 0` 时悬浮显示「N 处改动待提交 · 撤销全部 / 提交改动」。「撤销全部」= `clearAll()`，界面回到服务器投影。
-- **提交改动**：`POST /episodes/:id/changes { ops, summary }` → 成功后：清空 store → `invalidateQueries(['script'])` → 把响应的 `invalidatedLineIds` 写入缓存标记（音频区据此亮「需重新合成」），下次整集合成成功后清除。
+- **提交改动**：`POST /episodes/:id/changes { ops, summary }` → 成功后：清空 store → `invalidateQueries(['script'])` → 把响应的 `invalidatedLineIds` 写入缓存标记（写稿视图行上据此亮「需重新合成」，M4 消费；整集合成成功后清除）。
 - **合成前自动提交**（ADR-0003 Consequences）：试听/整集合成的 mutation 前置检查暂存缓冲，非空则先 `POST /changes` 再继续，toast 提示「已自动提交暂存改动」。编排放在 `EpisodePage`（或共享的 `ensureCommitted()` 帮手），两个 mutation 各自调用。
 - **与写稿大师并发的规则（MVP，无 base_version 守卫）**：SSE `script:changed` → 防抖重拉脚本；某行被 Agent 改过而用户已暂存该行时，**暂存保留（确认时人赢）**，行上提示「写稿大师也改过此行」。单用户 MVP 不做合并 UI。
 - **暂停编辑窗口**：写稿运行中（`run:start` → `done`）输入框禁用；文本侧行编辑不锁（暂存本就隔离），但提交按钮在流式期间可用（提交只影响 DB 与下一回合上下文，不干扰当前 run）。
@@ -126,11 +124,11 @@ type StagedOp = ChangeOp   // 直接复用 lib/api/types.ts 的 ops 联合类型
 
 | 数据 | hook | 来源 | 消费方 |
 |---|---|---|---|
-| 脚本行 | `useScript(episodeId)` | `GET /episodes/:id/script` | 文本侧 + 音频侧（同一缓存） |
+| 脚本行 | `useScript(episodeId)` | `GET /episodes/:id/script` | 写稿视图 + 后期视图（同一缓存） |
 | 单集详情/单集简介 | `useEpisode(episodeId)` | `GET /episodes/:id` | 编辑页头部、简介编辑 |
 | 工作间 + 说话人 | `useWorkspace(wsId)` | `GET /workspaces/:wsId`（一次拉全） | 设置页、说话人下拉 |
 | 产物 | `useArtifact(episodeId)` | `GET /episodes/:id/artifact` | master 播放器 + 高亮 |
-| 合成任务 | `useSynthesisJob(jobId)` | `GET /synthesis-jobs/:jobId`，`pending/running` 时 `refetchInterval: 2000`，终态停 | 下半区进度条（细粒度进度/取消 = #22 扩展点） |
+| 合成任务 | `useSynthesisJob(jobId)` | `GET /synthesis-jobs/:jobId`，`pending/running` 时 `refetchInterval: 2000`，终态停 | 后期视图进度条（细粒度进度/取消 = #22 扩展点） |
 | 写稿运行态 | `useWriterRun(episodeId)` | SSE 事件 → `stores/writer-run.ts` | 聊天流、状态条、暂存条提示 |
 
 SSE 事件 → 缓存的桥（唯一允许直接摸 QueryClient 的地方，放在 `useWriterRun` 内）：

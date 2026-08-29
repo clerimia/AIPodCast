@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router'
 import { PanelRightClose, PanelRightOpen, Settings } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { AudioLineList } from '@/features/audio-workspace/AudioLineList'
+import { PostView } from '@/features/audio-workspace/PostView'
 import { ChatStream } from '@/features/writer-chat/ChatStream'
 import { Composer } from '@/features/writer-chat/Composer'
 import { RunStatusBar } from '@/features/writer-chat/RunStatusBar'
@@ -12,6 +12,7 @@ import { ScriptLineList } from '@/features/script-panel/ScriptLineList'
 import { StagingBar } from '@/features/script-panel/StagingBar'
 import { applyOps } from '@/features/script-panel/staging'
 import { useEpisode } from '@/hooks/useEpisode'
+import { useInvalidatedLineIds } from '@/hooks/useInvalidated'
 import { useScript } from '@/hooks/useScript'
 import { useWorkspace } from '@/hooks/useWorkspace'
 import { apiErrorMessage } from '@/lib/api/http'
@@ -19,8 +20,9 @@ import { cn } from '@/lib/utils'
 import { useStaging } from '@/stores/staging'
 import { useWriterRunStore } from '@/stores/writer-run'
 
-// 编辑页（CONTEXT.md：上半区文本编辑、下半区音频工作区，上下各自滚动）。
-// 右侧全高侧边栏 = 写稿大师聊天（M3，可收起，收起后不占布局）；左侧上 = 脚本面板、下 = 音频工作区（M4 落地）。
+// 编辑页（#30 重构，原上下两半）：左栏「写稿 / 后期」同页视图切换（决策 issue #30），
+// 右侧全高侧边栏 = 写稿大师聊天（M3，可收起）。写稿视图 = 脚本行编辑 + 行内联试听；
+// 后期视图 = 素材概览 + 停顿/语速参数（M5 补整集合成/Master 播放）。暂存条横跨两视图。
 export default function EpisodePage() {
   const { wsId = '', episodeId = '' } = useParams()
   const episode = useEpisode(episodeId)
@@ -29,7 +31,9 @@ export default function EpisodePage() {
   const writer = useWriterRun(episodeId)
   const running = useWriterRunStore((s) => s.runs[episodeId]?.running ?? false)
   const [chatOpen, setChatOpen] = useState(true)
+  const [view, setView] = useState<'write' | 'post'>('write')
   const ops = useStaging((s) => s.buffers[episodeId]?.ops)
+  const invalidated = useInvalidatedLineIds(episodeId)
 
   const speakers = useMemo(() => workspace.data?.speakers ?? [], [workspace.data])
 
@@ -38,6 +42,12 @@ export default function EpisodePage() {
     if (!script.data) return []
     return applyOps(script.data.lines, ops ?? [], speakers)
   }, [script.data, ops, speakers])
+
+  // 后期 tab 上的角标：待处理素材行数（未合成或被作废）
+  const needsResynthCount = useMemo(
+    () => lines.filter((l) => !l.asset.has || invalidated.has(l.id)).length,
+    [lines, invalidated],
+  )
 
   return (
     <div className="flex h-svh flex-col">
@@ -86,19 +96,30 @@ export default function EpisodePage() {
       )}
 
       <main className="flex min-h-0 flex-1">
-        <div className="grid min-h-0 flex-1 grid-rows-2">
-          {/* 左上：脚本行面板 */}
-          <section className="min-h-0 overflow-y-auto border-b">
+        <div className="flex min-h-0 flex-1 flex-col">
+          {/* 左栏视图切换（#30）：两视图各自占满剩余高度 */}
+          <div className="flex items-center gap-1 border-b px-3 py-1.5">
+            <ViewTab active={view === 'write'} onClick={() => setView('write')}>
+              写稿
+            </ViewTab>
+            <ViewTab active={view === 'post'} onClick={() => setView('post')}>
+              后期
+              {needsResynthCount > 0 && (
+                <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500/15 px-1 text-[10px] font-medium text-amber-600">
+                  {needsResynthCount}
+                </span>
+              )}
+            </ViewTab>
+          </div>
+
+          <section className="min-h-0 flex-1 overflow-y-auto">
             {script.isPending ? (
               <p className="p-4 text-sm text-muted-foreground">脚本加载中…</p>
-            ) : (
+            ) : view === 'write' ? (
               <ScriptLineList episodeId={episodeId} lines={lines} speakers={speakers} />
+            ) : (
+              <PostView episodeId={episodeId} lines={lines} />
             )}
-          </section>
-
-          {/* 左下：音频工作区（M4 落试听/停顿语速；M5 补整集合成/Master 播放） */}
-          <section className="min-h-0 overflow-y-auto">
-            <AudioLineList episodeId={episodeId} lines={lines} />
           </section>
         </div>
 
@@ -116,5 +137,31 @@ export default function EpisodePage() {
 
       <StagingBar episodeId={episodeId} />
     </div>
+  )
+}
+
+function ViewTab({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      className={cn(
+        'rounded-md px-2.5 py-1 text-sm transition-colors',
+        active
+          ? 'bg-secondary font-medium text-secondary-foreground'
+          : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+      )}
+      onClick={onClick}
+    >
+      {children}
+    </button>
   )
 }
