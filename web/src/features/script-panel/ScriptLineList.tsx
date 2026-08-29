@@ -1,8 +1,8 @@
-import { useMemo } from 'react'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { ScriptLine, Speaker } from '@/lib/api/types'
 import { useStaging, type EditPatch } from '@/stores/staging'
+import { isStaged } from './staging'
 import { ScriptLineRow } from './ScriptLineRow'
 
 // 脚本行面板（文本投影）：['script', ep] 缓存叠暂存 ops 的行列表（投影在 EpisodePage 算好）。
@@ -21,16 +21,6 @@ export function ScriptLineList({
   const stageDelete = useStaging((s) => s.stageDelete)
   const stageEdit = useStaging((s) => s.stageEdit)
   const stageReorder = useStaging((s) => s.stageReorder)
-
-  // 每行的暂存标记只随 ops 变化重算
-  const stagedIds = useMemo(() => {
-    const ids = new Set<string>()
-    for (const op of ops ?? []) {
-      if (op.op === 'edit' || op.op === 'delete') ids.add(op.lineId)
-      if (op.op === 'add') ids.add(op.tempId)
-    }
-    return ids
-  }, [ops])
 
   const addAfter = (afterLineId: string | null) => {
     stageAdd(episodeId, afterLineId, {
@@ -68,7 +58,7 @@ export function ScriptLineList({
               key={line.id}
               line={line}
               speakers={speakers}
-              staged={stagedIds.has(line.id)}
+              staged={isStaged(ops ?? [], line.id)}
               isFirst={i === 0}
               isLast={i === lines.length - 1}
               onEdit={(patch: EditPatch) => stageEdit(episodeId, line.id, patch)}

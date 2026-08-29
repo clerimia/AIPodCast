@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify'
 import { notifyChangeSet } from '../writer/session.js'
 import { AppError } from '../../shared/errors.js'
 import { isPauseLevel, isSpeedLevel, type PauseLevel, type SpeedLevel } from '../../shared/post-params.js'
-import { asBody, isUuid, optionalString, requireUuidParam } from '../../shared/validate.js'
+import { asBody, isUuid, optionalString, requireUuidField, requireUuidParam } from '../../shared/validate.js'
 import type { ScriptOp } from './apply-ops.js'
 import * as service from './service.js'
 
@@ -16,13 +16,6 @@ interface EpisodeParams {
 interface LineParams {
   episodeId: string
   lineId: string
-}
-
-function requireUuidField(value: unknown, field: string): string {
-  if (typeof value !== 'string' || !isUuid(value)) {
-    throw new AppError('BAD_REQUEST', `field '${field}' must be a uuid`, 400)
-  }
-  return value
 }
 
 // op 形状解析：非法形状/缺失字段/非 uuid 引用一律 400 BAD_REQUEST；

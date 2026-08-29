@@ -83,11 +83,12 @@ export function applyOps(
   return lines
 }
 
-/** 该行是否带暂存改动（reorder 不算：行内容没变，位置变化已由 serial 呈现） */
+/** 该行是否带暂存改动（新增行/被编辑/被删除算；reorder 不算：位置变化已由 serial 呈现） */
 export function isStaged(ops: StagedOp[], lineId: string): boolean {
   return ops.some(
     (op) =>
-      (op.op === 'edit' || op.op === 'delete') && op.lineId === lineId
+      (op.op === 'add' && op.tempId === lineId) ||
+      ((op.op === 'edit' || op.op === 'delete') && op.lineId === lineId),
   )
 }
 

@@ -322,6 +322,25 @@ test('删行 → 逻辑删除出投影、serial 压实重编、素材作废；�
       ['L002', id2],
     ])
     assert.equal((await app.db.select().from(audioAssets).where(eq(audioAssets.scriptLineId, id2))).length, 1)
+
+    // 同提交内先 edit 后 delete：合法（edit 被跳过——行随即逻辑删除，永不可见）
+    const skipEdit = await app.inject({
+      method: 'POST',
+      url: `/api/episodes/${f.episodeId}/changes`,
+      payload: {
+        ops: [
+          { op: 'edit', lineId: id3, patch: { text: '改了又删' } },
+          { op: 'delete', lineId: id3 },
+        ],
+      },
+    })
+    assert.equal(skipEdit.statusCode, 200)
+    assert.deepEqual(
+      (skipEdit.json() as { invalidatedLineIds: string[] }).invalidatedLineIds,
+      [id3],
+    )
+    script = await getScript(app, f.episodeId)
+    assert.deepEqual(script.lines.map((l) => l.id), [id2])
   } finally {
     await cleanup(app, f.created)
     await app.close()
@@ -413,14 +432,15 @@ test('客户端预生成 id 的暂存新增行可被同提交的 afterLineId/reo
       ],
     )
 
-    // 重复 add.id → 400；与现有行相撞 → 409
+    // 重复 add.id → 400（id 与现有行不相撞，纯属同提交内重复）；与现有行相撞 → 409
+    const d1 = '00000000-0000-4000-8000-0000000abc03'
     const dup = await app.inject({
       method: 'POST',
       url: `/api/episodes/${f.episodeId}/changes`,
       payload: {
         ops: [
-          { op: 'add', id: n1, afterLineId: null, speakerId: f.speakerId, text: '三' },
-          { op: 'add', id: n1, afterLineId: null, speakerId: f.speakerId, text: '四' },
+          { op: 'add', id: d1, afterLineId: null, speakerId: f.speakerId, text: '三' },
+          { op: 'add', id: d1, afterLineId: null, speakerId: f.speakerId, text: '四' },
         ],
       },
     })

@@ -40,3 +40,11 @@ export function optionalString(body: Record<string, unknown>, field: string): st
   }
   return value
 }
+
+/** 请求体字段必须是合法 uuid */
+export function requireUuidField(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !isUuid(value)) {
+    throw new AppError('BAD_REQUEST', `field '${field}' must be a uuid`, 400)
+  }
+  return value
+}

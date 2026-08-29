@@ -10,7 +10,7 @@ import { commitBlocker, toRequestOps } from './staging'
 
 // 暂存条（ADR-0003）：N 处改动待提交 · 撤销全部 / 提交改动。
 // 提交 = POST /changes：成功后清空 store、用响应的新脚本直写缓存、invalidatedLineIds
-// 写入 restale 缓存（音频区据此亮「需重新合成」，M4 消费；整集合成成功后清除）。
+// 写入 invalidated 缓存（音频区据此亮「需重新合成」，M4 消费；整集合成成功后清除）。
 export function StagingBar({ episodeId }: { episodeId: string }) {
   const queryClient = useQueryClient()
   const ops = useStaging((s) => s.buffers[episodeId]?.ops)
@@ -28,7 +28,7 @@ export function StagingBar({ episodeId }: { episodeId: string }) {
     onSuccess: (res) => {
       clearAll(episodeId)
       queryClient.setQueryData(qk.script(episodeId), { lines: res.lines } satisfies Script)
-      queryClient.setQueryData(qk.restale(episodeId), res.invalidatedLineIds)
+      queryClient.setQueryData(qk.invalidated(episodeId), res.invalidatedLineIds)
       toast.success('改动已提交', {
         description:
           res.invalidatedLineIds.length > 0

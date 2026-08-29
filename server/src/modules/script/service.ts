@@ -3,7 +3,7 @@
 // ChangeSet→会话通知由路由层在事务成功后编排。
 // 作废素材 = 事务内删 audio_assets 行（一个 DB 操作，不调 synthesis）。
 import { randomUUID } from 'node:crypto'
-import { and, asc, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { Db } from '../../db/client.js'
 import {
   audioAssets,
@@ -16,6 +16,7 @@ import {
 } from '../../db/schema.js'
 import { AppError } from '../../shared/errors.js'
 import type { LinePost, PauseLevel, SpeedLevel } from '../../shared/post-params.js'
+import { parseSerial } from '../../shared/serial.js'
 import { applyOps, resolveOps, type OpLine, type ScriptOp } from './apply-ops.js'
 
 /** db.transaction 回调里的事务句柄（与 Db 同一查询面，作用域限于事务内） */
@@ -99,7 +100,7 @@ async function episodeExists(db: Db, episodeId: string): Promise<boolean> {
   return row !== undefined
 }
 
-/** 活行投影：过滤 deleted、按 serial 排序、左联素材（无素材行 has=false） */
+/** 活行投影：过滤 deleted、按 serial 数值序（L1000 > L999，字符串序会排错）、左联素材 */
 async function scriptLineViews(db: Db, episodeId: string): Promise<ScriptLineView[]> {
   const rows = await db
     .select(lineColumns)
@@ -107,8 +108,9 @@ async function scriptLineViews(db: Db, episodeId: string): Promise<ScriptLineVie
     .innerJoin(speakers, eq(speakers.id, scriptLines.speakerId))
     .leftJoin(audioAssets, eq(audioAssets.scriptLineId, scriptLines.id))
     .where(and(eq(scriptLines.episodeId, episodeId), eq(scriptLines.deleted, false)))
-    .orderBy(asc(scriptLines.serial))
-  return rows.map((row) => ({
+  return rows
+    .sort((a, b) => parseSerial(a.serial) - parseSerial(b.serial))
+    .map((row) => ({
     id: row.id,
     serial: row.serial,
     speakerId: row.speakerId,
@@ -154,7 +156,9 @@ export async function applyChanges(
       })
       .from(scriptLines)
       .where(and(eq(scriptLines.episodeId, episodeId), eq(scriptLines.deleted, false)))
-      .orderBy(asc(scriptLines.serial))
+
+    // serial 数值序（字符串序 L1000 < L999 会排错）
+    base.sort((a, b) => parseSerial(a.serial) - parseSerial(b.serial))
 
     const resolved = resolveOps(ops, () => randomUUID())
     const result = applyOps(base, resolved)
@@ -187,23 +191,25 @@ export async function applyChanges(
       )
     }
 
-    // 编辑行：patch 全是文本层字段（speakerId/text/instructions）
+    // 编辑行：patch 全是文本层字段（speakerId/text/instructions）。
+    // 引用不在最终工作集的行（同提交内先 edit 后 delete）直接跳过——该行随即被
+    // 逻辑删除，永远不可见；先 delete 后 edit 则被 applyOps 以 409 拒绝。
     const serialTouched = new Set(result.addedIds)
     for (const op of resolved) {
       if (op.op !== 'edit') continue
-      const set: { speakerId?: string; text?: string; instructions?: string; serial?: string; updatedAt: Date } = {
-        updatedAt: now,
-      }
-      if (op.patch.speakerId !== undefined) set.speakerId = op.patch.speakerId
-      if (op.patch.text !== undefined) set.text = op.patch.text
-      if (op.patch.instructions !== undefined) set.instructions = op.patch.instructions
       const serial = newSerialById.get(op.lineId)
-      if (serial !== undefined) {
-        // undefined = 该行同提交内已被删，serial 不动（deleted 行不出现在投影）
-        set.serial = serial
-        serialTouched.add(op.lineId)
-      }
-      await tx.update(scriptLines).set(set).where(eq(scriptLines.id, op.lineId))
+      if (serial === undefined) continue
+      await tx
+        .update(scriptLines)
+        .set({
+          ...(op.patch.speakerId !== undefined && { speakerId: op.patch.speakerId }),
+          ...(op.patch.text !== undefined && { text: op.patch.text }),
+          ...(op.patch.instructions !== undefined && { instructions: op.patch.instructions }),
+          serial,
+          updatedAt: now,
+        })
+        .where(eq(scriptLines.id, op.lineId))
+      serialTouched.add(op.lineId)
     }
 
     // 删除行：逻辑删除，id 永不复用
