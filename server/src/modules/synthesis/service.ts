@@ -8,7 +8,7 @@ import type { Db } from '../../db/client.js'
 import { audioAssets, episodes, scriptLines, speakers } from '../../db/schema.js'
 import * as asset from './asset.js'
 import type { TtsClient } from './tts.js'
-import { wavDurationMs } from './wav.js'
+import { wavDurationMs } from '../../shared/wav.js'
 
 export interface SynthesisDeps {
   mediaRoot: string

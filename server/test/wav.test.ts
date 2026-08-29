@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { wavDurationMs } from '../src/modules/synthesis/wav.js'
+import { wavDurationMs, wavPcmDurationMs } from '../src/shared/wav.js'
 import { makeWav } from './helpers.js'
 
 // WAV 时长解析单测（M4：DashScope 不回传时长，本地按 fmt.byteRate + data.size 推导）
@@ -28,6 +28,12 @@ test('data 前有附加 chunk（LIST）：仍正确取 fmt/data', () => {
   list.writeUInt32LE(4, 4)
   const spliced = Buffer.concat([wav.subarray(0, 12), list, wav.subarray(12)])
   assert.equal(wavDurationMs(spliced), 1000)
+})
+
+test('wavPcmDurationMs 非取整（post 确定性时间戳用）：1041.666…ms 不取整', () => {
+  const wav = makeWav({ dataBytes: 50000 })
+  assert.ok(Math.abs(wavPcmDurationMs(wav)! - 1041.6666666666667) < 1e-9)
+  assert.equal(wavPcmDurationMs(Buffer.from('not a wav at all')), null)
 })
 
 test('非 RIFF / 截断 / byteRate 0 → null（不抛错）', () => {

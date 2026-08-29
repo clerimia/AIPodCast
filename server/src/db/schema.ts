@@ -11,8 +11,10 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
 
 const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).notNull().defaultNow()
@@ -159,6 +161,47 @@ export const conversations = pgTable('conversations', {
   sessionFile: text('session_file'),
   createdAt: createdAt(),
 })
+
+// 任务失败信息（docs/synthesis-progress-and-cancel.md）：三个 SYNTH_* 错误码 + 重启中断
+export interface JobError {
+  code: string
+  message: string
+  lineId?: string
+  serial?: string
+}
+
+// 合成任务（#28 重新讨论定案）：整集合成的异步执行留痕，任务创建插行、状态迁移落库。
+// 可持久化状态在 DB；运行期句柄（AbortController/取消旗标）留进程内（synthesis/jobs.ts）。
+// 重启时非终态孤儿行标 interrupted（终态，不自动续跑）。
+export const synthesisJobs = pgTable(
+  'synthesis_jobs',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    episodeId: uuid('episode_id')
+      .notNull()
+      .references(() => episodes.id, { onDelete: 'cascade' }),
+    // pending|running|canceling|succeeded|failed|canceled|interrupted（M5 产生前四 + interrupted）
+    status: text().notNull().default('pending'),
+    // tts|post|encode|verify|null（pending 时 null；终态定格在最后所处阶段）
+    stage: text(),
+    // 启动时快照的有序 lineIds（非删除行按 serial 序）
+    plan: jsonb().$type<string[]>().notNull().default([]),
+    // 累积已完成行（含命中复用）
+    doneLineIds: jsonb('done_line_ids').$type<string[]>().notNull().default([]),
+    currentLine: jsonb('current_line').$type<{ lineId: string; serial: string } | null>(),
+    // { code, message, lineId?, serial? } | null
+    error: jsonb().$type<JobError | null>(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index('synthesis_jobs_episode_idx').on(t.episodeId),
+    // 同一单集同时只允许一个活跃任务（并发守卫的后备：路由层先查，冲突时唯一索引兜底）
+    uniqueIndex('synthesis_jobs_active_unique')
+      .on(t.episodeId)
+      .where(sql`status IN ('pending', 'running', 'canceling')`),
+  ],
+)
 
 // 产物：一集 0..1，重新合成整包替换（验证失败保留旧产物，ADR-0007）
 export const artifacts = pgTable('artifacts', {

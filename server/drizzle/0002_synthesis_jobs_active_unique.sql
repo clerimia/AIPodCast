@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "synthesis_jobs_active_unique" ON "synthesis_jobs" USING btree ("episode_id") WHERE status IN ('pending', 'running', 'canceling');

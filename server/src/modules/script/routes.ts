@@ -133,6 +133,20 @@ export async function scriptRoutes(app: FastifyInstance) {
     return script
   })
 
+  // 改单集 title / show_notes（单集简介，ADR-0009 活字段；#19 表 2）
+  app.patch<{ Params: EpisodeParams }>('/:episodeId', async (req) => {
+    const episodeId = requireUuidParam(req.params.episodeId, 'episode')
+    const body = asBody(req.body)
+    const patch: { title?: string; showNotes?: string } = {}
+    const title = optionalString(body, 'title')
+    if (title !== undefined) patch.title = title
+    const showNotes = optionalString(body, 'showNotes')
+    if (showNotes !== undefined) patch.showNotes = showNotes
+    const updated = await service.updateEpisode(app.db, episodeId, patch)
+    if (!updated) throw new AppError('NOT_FOUND', 'episode not found', 404)
+    return updated
+  })
+
   // 暂存/确认门（ADR-0003）：把暂存改动一次性提交，单事务 + ChangeSet + 作废素材。
   // 路由层编排（modules-and-phasing 决策 2）：事务成功后再通知会话；script 不 import writer。
   app.post<{ Params: EpisodeParams }>('/:episodeId/changes', async (req) => {

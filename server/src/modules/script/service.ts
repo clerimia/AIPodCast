@@ -303,6 +303,28 @@ async function assertSpeakersExist(tx: Tx, wsId: string, speakerIds: string[]) {
 
 // ---- 后期参数（ADR-0004）：直接写，不经确认门、不追加 ChangeSet ----
 
+/** 改单集 title / show_notes（#19 表 2；show_notes 是单集简介活字段，ADR-0009）。
+ * 字段缺省 = 不改；单集不存在 → null（404） */
+export async function updateEpisode(
+  db: Db,
+  episodeId: string,
+  patch: { title?: string; showNotes?: string },
+): Promise<{ title: string; showNotes: string } | null> {
+  if (patch.title === undefined && patch.showNotes === undefined) {
+    const [current] = await db
+      .select({ title: episodes.title, showNotes: episodes.showNotes })
+      .from(episodes)
+      .where(eq(episodes.id, episodeId))
+    return current ?? null
+  }
+  const [row] = await db
+    .update(episodes)
+    .set({ ...patch, updatedAt: new Date() })
+    .where(eq(episodes.id, episodeId))
+    .returning({ title: episodes.title, showNotes: episodes.showNotes })
+  return row ?? null
+}
+
 export interface PostRulesPatch {
   pause?: PauseLevel
   speed?: SpeedLevel

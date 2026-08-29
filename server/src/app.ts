@@ -2,8 +2,11 @@ import Fastify, { type FastifyError, type FastifyInstance } from 'fastify'
 import { artifactsRoutes } from './modules/artifacts/routes.js'
 import { createDb, type Db } from './db/client.js'
 import { healthRoutes } from './modules/health/routes.js'
+import { runPostPipeline } from './modules/post/pipeline.js'
+import { killRunningFfmpeg } from './modules/post/ffmpeg.js'
 import { scriptRoutes } from './modules/script/routes.js'
-import { synthesisRoutes } from './modules/synthesis/routes.js'
+import { SynthesisJobManager } from './modules/synthesis/jobs.js'
+import { synthesisJobRoutes, synthesisRoutes } from './modules/synthesis/routes.js'
 import { makeDashscopeTts, type TtsClient } from './modules/synthesis/tts.js'
 import { writerRoutes } from './modules/writer/routes.js'
 import { WriterRuntime } from './modules/writer/session.js'
@@ -15,6 +18,7 @@ declare module 'fastify' {
   interface FastifyInstance {
     db: Db
     writer: WriterRuntime
+    jobs: SynthesisJobManager
     mediaRoot: string
     tts: TtsClient
   }
@@ -39,13 +43,22 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   app.decorate('db', db)
 
   // 媒体根（素材/产物落盘与流式共用）；TTS 客户端（synthesis 用，测试可注 stub）
-  app.decorate('mediaRoot', opts.mediaRoot ?? env.mediaRoot)
-  app.decorate('tts', opts.tts ?? makeDashscopeTts())
+  const mediaRoot = opts.mediaRoot ?? env.mediaRoot
+  const tts = opts.tts ?? makeDashscopeTts()
+  app.decorate('mediaRoot', mediaRoot)
+  app.decorate('tts', tts)
 
   // 写稿运行时（Map<episodeId, AgentSession>）；进程退出统一 dispose（ADR-0005/配方 §3.3）
   const writer = new WriterRuntime(db)
   app.decorate('writer', writer)
+
+  // 合成任务编排（M5）：synthesis_jobs 落库 + 进程内 async 循环；启动收场 = 孤儿任务标
+  // interrupted + 清残留临时目录；退出时杀在途 ffmpeg 子进程（Windows 不随父进程死）
+  const jobs = new SynthesisJobManager(db, { mediaRoot, tts, runPipeline: runPostPipeline })
+  app.decorate('jobs', jobs)
+  await jobs.recover()
   app.addHook('onClose', async () => {
+    killRunningFfmpeg()
     await writer.dispose()
     await db.$client.end({ timeout: 1 })
   })
@@ -83,6 +96,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(workspaceRoutes, { prefix: '/api/workspaces' })
   await app.register(scriptRoutes, { prefix: '/api/episodes' })
   await app.register(synthesisRoutes, { prefix: '/api/episodes' })
+  await app.register(synthesisJobRoutes, { prefix: '/api/synthesis-jobs' })
   await app.register(writerRoutes, { prefix: '/api/episodes' })
   await app.register(artifactsRoutes, { prefix: '/api' })
 

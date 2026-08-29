@@ -1,10 +1,12 @@
-// 产物/媒体模块路由（#19「试听 / 整集合成 / 产物」表）：GET /api/media/* 流式 + Range。
-// assets 名 = 行 uuid（路由校验）+ 固定 .wav；artifacts 名走白名单（M5 产物落盘前恒 404）。
-// GET artifact 端点 M5 随产物实现。payload 由 handler `return`，fastify 单次发送。
+// 产物/媒体模块路由（#19「试听 / 整集合成 / 产物」表）：GET /api/media/* 流式 + Range、
+// GET /api/episodes/:id/artifact 产物元数据 + 行级文稿快照（M5）。
+// assets 名 = 行 uuid（路由校验）+ 固定 .wav；artifacts 名走白名单（防路径穿越）。
+// payload 由 handler `return`，fastify 单次发送。
 import type { FastifyInstance } from 'fastify'
 import { AppError } from '../../shared/errors.js'
 import { requireUuidParam } from '../../shared/validate.js'
 import { contentTypeFor, mediaFilePath, prepareMediaPayload } from './media.js'
+import { getArtifactView } from './service.js'
 
 interface MediaParams {
   wsId: string
@@ -18,10 +20,21 @@ interface ArtifactParams {
   file: string
 }
 
+interface EpisodeParams {
+  episodeId: string
+}
+
 // 产物文件包固定三个名字（ADR-0008），白名单即防穿越
 const ARTIFACT_FILES = new Set(['master.mp3', 'transcript.json', 'notes.md'])
 
 export async function artifactsRoutes(app: FastifyInstance) {
+  app.get<{ Params: EpisodeParams }>('/episodes/:episodeId/artifact', async (req) => {
+    const episodeId = requireUuidParam(req.params.episodeId, 'episode')
+    const view = await getArtifactView(app.db, app.mediaRoot, episodeId)
+    if (!view) throw new AppError('NOT_FOUND', 'artifact not found', 404)
+    return view
+  })
+
   app.get<{ Params: MediaParams }>('/media/:wsId/:episodeId/assets/:lineId', async (req, reply) => {
     const wsId = requireUuidParam(req.params.wsId, 'workspace')
     const episodeId = requireUuidParam(req.params.episodeId, 'episode')
