@@ -12,11 +12,10 @@ import type { EpisodeDetail, PostRules, ScriptLine, SynthesisJob } from '@/lib/a
 import { useArtifact } from '@/hooks/useArtifact'
 import { useEnsureCommitted } from '@/hooks/useEnsureCommitted'
 import { useInvalidatedLineIds } from '@/hooks/useInvalidated'
-import { useSynthesisJobStore } from '@/stores/synthesis-job'
 
 // 后期视图（#30，原音频工作区下半区重构）：素材概览 + 集级默认档位 + 行级停顿/语速
 // 覆盖 + 整集合成（M5 异步任务）+ MasterPlayer 产物播放。不镜像脚本行全文——那是
-// 写稿视图的职责；这里只管拼接层参数、素材状态与成片。
+// 写稿视图的职责；这里只管拼接层参数、素材状态与产物。
 export function PostView({ episodeId, lines }: { episodeId: string; lines: ScriptLine[] }) {
   // 集级默认档位：与单集详情同缓存（['episode', ep]），PATCH 成功后直写 postRules
   const { data: postRules } = useQuery({
@@ -28,10 +27,9 @@ export function PostView({ episodeId, lines }: { episodeId: string; lines: Scrip
   const invalidated = useInvalidatedLineIds(episodeId)
   const queryClient = useQueryClient()
 
-  const { job, isPolling } = useSynthesisJob(episodeId)
+  const { job, isPolling, setJobId } = useSynthesisJob(episodeId)
   const { data: artifact } = useArtifact(episodeId)
   const ensureCommitted = useEnsureCommitted(episodeId, '整集合成')
-  const setJobId = useSynthesisJobStore((s) => s.setJobId)
 
   const patchRules = async (patch: PostLevelPatch) => {
     // 集级形态不会发 null（无回退项）；类型上剔除保持 PATCH 体干净
@@ -50,14 +48,14 @@ export function PostView({ episodeId, lines }: { episodeId: string; lines: Scrip
   }
 
   // 整集合成（#28）：先自动提交暂存（合成只认已入库的稿）→ POST /synthesize →
-  // jobId 进 store 交给 useSynthesisJob 轮询。活跃任务期间按钮禁用（服务端 409 兜底）。
+  // jobId 交给 useSynthesisJob 轮询。活跃任务期间按钮禁用（服务端 409 兜底）。
   const startSynthesis = async () => {
     if (lines.length === 0) return
     if (!(await ensureCommitted())) return
     try {
       const { jobId } = await episodeApi.synthesize(episodeId)
-      setJobId(episodeId, jobId)
-      toast.info('整集合成已开始', { description: '逐行 TTS → 拼接归一 → mp3，完成后自动出现成片' })
+      setJobId(jobId)
+      toast.info('整集合成已开始', { description: '逐行 TTS → 拼接归一 → mp3，完成后产物就绪' })
     } catch (e) {
       toast.error(`发起合成失败：${apiErrorMessage(e)}`)
     }
@@ -123,7 +121,7 @@ export function PostView({ episodeId, lines }: { episodeId: string; lines: Scrip
         {job && <SynthesisProgress job={job} lines={lines} />}
         {!job && !artifact && (
           <p className="text-xs text-muted-foreground">
-            还没有成片。发起整集合成后，这里会出现进度与 master 播放器。
+            还没有产物。发起整集合成后，这里会出现进度与 master 播放器。
           </p>
         )}
       </div>

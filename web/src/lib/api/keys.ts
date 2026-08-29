@@ -12,4 +12,7 @@ export const qk = {
   invalidated: (episodeId: string) => ['invalidated', episodeId] as const,
   artifact: (episodeId: string) => ['artifact', episodeId] as const,
   synthesisJob: (jobId: string) => ['synthesis-job', jobId] as const,
+  /** 整集合成 jobId（客户端状态，无服务端来源）：useSynthesisJob 经 setQueryData 写/清，
+   * 写稿/后期视图切换不丢轮询（页面刷新即失——运行期句柄本就在服务端进程内） */
+  synthesisJobId: (episodeId: string) => ['synthesis-job-id', episodeId] as const,
 }

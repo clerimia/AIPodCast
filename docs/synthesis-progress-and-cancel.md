@@ -122,7 +122,7 @@ stateDiagram-v2
 
 ## jobs 落库与运行期句柄（#28 重新讨论）
 
-任务**落库 `synthesis_jobs` 表**（#28 重新讨论，替代原「内存 `Map`、不建表」#21 定案）：任务创建插行，状态迁移落库（逐行进度随迁移/节流写，不逐行一写）。可持久化状态在 DB，不可持久化的运行期句柄留进程内、按 jobId 关联：
+任务**落库 `synthesis_jobs` 表**（#28 重新讨论，替代原「内存 `Map`、不建表」#21 定案）：任务创建插行，状态迁移落库（`doneLineIds`/`currentLine` 随每行推进写——下方最小轮询 UI 的「✓/转圈」以 DB 为准；#22 的更细粒度遥测才节流）。可持久化状态在 DB，不可持久化的运行期句柄留进程内、按 jobId 关联：
 
 ```ts
 type SynthesisJobRow = {            // synthesis_jobs 表（drizzle）

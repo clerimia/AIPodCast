@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query'
 import { episodeApi } from '@/lib/api/episode'
 import { ApiError } from '@/lib/api/http'
 import { qk } from '@/lib/api/keys'
-import type { Artifact } from '@/lib/api/types'
 
 export function useArtifact(episodeId: string) {
   return useQuery({
@@ -20,5 +19,3 @@ export function useArtifact(episodeId: string) {
     enabled: episodeId !== '',
   })
 }
-
-export type { Artifact }

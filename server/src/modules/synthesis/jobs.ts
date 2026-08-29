@@ -62,6 +62,16 @@ export interface SynthesisJobSnapshot {
   error: JobError | null
 }
 
+/** 重试判定（synthesis-progress-and-cancel.md）：超时/网络错误（tts.ts 无 upstreamStatus
+ * 的 502）、上游 5xx/429 → 重试 1 次；上游 4xx 参数错误直接失败 */
+function isRetryableTtsError(err: unknown): boolean {
+  if (!(err instanceof AppError)) return false
+  if (err.statusCode === 429) return true
+  if (err.statusCode < 500) return false
+  const upstream = (err as AppError & { upstreamStatus?: number }).upstreamStatus
+  return upstream === undefined || upstream >= 500 || upstream === 429
+}
+
 export class SynthesisJobManager {
   private db: Db
   deps: SynthesisJobDeps
@@ -298,14 +308,13 @@ export class SynthesisJobManager {
     }
   }
 
-  /** 单行重试 1 次（2s 退避，仅 5xx/429——超时/网络/上游错误在 tts.ts 都以 502 报），4xx 直接失败 */
+  /** 单行重试 1 次（2s 退避）；判定见 isRetryableTtsError */
   private async synthesizeLineWithRetry(episodeId: string, line: PlanLine) {
     const backoff = this.deps.lineRetryBackoffMs ?? 2000
     try {
       return await synthesizeLine(this.db, this.deps, { episodeId, lineId: line.id })
     } catch (err) {
-      const retryable = err instanceof AppError && (err.statusCode >= 500 || err.statusCode === 429)
-      if (!retryable) throw err
+      if (!isRetryableTtsError(err)) throw err
       await new Promise((resolve) => setTimeout(resolve, backoff))
       return synthesizeLine(this.db, this.deps, { episodeId, lineId: line.id })
     }

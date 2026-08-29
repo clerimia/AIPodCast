@@ -1,6 +1,6 @@
 // 合成任务前端纯逻辑（#28）：终态判定 / 轮询间隔 / 阶段文案。与轮询 hook 分离以便
 // 单测；状态词汇对照 docs/synthesis-progress-and-cancel.md（interrupted = 重启收场终态）。
-import type { SynthesisStatus } from '@/lib/api/types'
+import type { SynthesisStage, SynthesisStatus } from '@/lib/api/types'
 
 /** 终态：轮询停止、进度条收场。canceling 是活跃态（等 canceled 两段式收场，M6） */
 export function isTerminalJobStatus(status: SynthesisStatus): boolean {
@@ -13,7 +13,7 @@ export function jobRefetchInterval(status: SynthesisStatus): number | false {
 }
 
 /** 进度条阶段文案（stage 为 null = 已落库尚未开跑，排队中） */
-export function stageLabel(stage: 'tts' | 'post' | 'verify' | 'encode' | null): string {
+export function stageLabel(stage: SynthesisStage | null): string {
   switch (stage) {
     case null:
       return '排队等待中…'

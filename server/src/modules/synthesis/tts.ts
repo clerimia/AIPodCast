@@ -70,11 +70,15 @@ export function makeDashscopeTts(options: DashscopeTtsOptions = {}): TtsClient {
       }
       const payload = (await res.json().catch(() => null)) as DashscopeTtsResponse | null
       if (!res.ok) {
-        throw new AppError(
+        // M4 契约：路由层一律 SYNTH_FAILED 502；upstreamStatus 保留上游真实状态码，
+        // 供任务层重试判定（synthesis-progress-and-cancel.md：4xx 参数错误不重试）
+        const err = new AppError(
           'SYNTH_FAILED',
           `TTS 上游错误 ${payload?.code ?? res.status}：${payload?.message ?? res.statusText}`,
           502,
         )
+        Object.assign(err, { upstreamStatus: res.status })
+        throw err
       }
       const url = payload?.output?.audio?.url
       if (!url) throw new AppError('SYNTH_FAILED', 'TTS 响应缺少 output.audio.url', 502)

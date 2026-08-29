@@ -39,7 +39,7 @@ export function MasterPlayer({ artifact, lines }: { artifact: Artifact; lines: S
   return (
     <div className="space-y-2 rounded-lg border p-3">
       <div className="flex items-center gap-2">
-        <h3 className="text-sm font-semibold">成片</h3>
+        <h3 className="text-sm font-semibold">产物</h3>
         <Badge variant="secondary" className="text-xs">
           {(artifact.durationMs / 1000).toFixed(1)}s
         </Badge>
@@ -85,7 +85,7 @@ export function MasterPlayer({ artifact, lines }: { artifact: Artifact; lines: S
                 <span className={cn('min-w-0 text-sm', !active && 'text-muted-foreground')}>
                   {entry.text}
                   {drifted && (
-                    <span className="ml-1 text-xs text-amber-600" title="脚本该行在合成后改过，成片里还是旧文本">
+                    <span className="ml-1 text-xs text-amber-600" title="脚本该行在合成后改过，产物里还是旧文本">
                       （已改稿）
                     </span>
                   )}
