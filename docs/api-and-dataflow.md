@@ -106,7 +106,9 @@ flowchart LR
 ```jsonc
 {
   "ops": [
-    { "op": "add",     "afterLineId": "uuid|null", "speakerId": "uuid", "text": "…", "instructions": "…" },
+    // id 可选：客户端为暂存新增行预生成的 uuid，供同一提交内后续 op
+    // （afterLineId / edit / reorder）引用该行；缺省由服务端生成，与现有行冲突 → 409
+    { "op": "add",     "id": "uuid?", "afterLineId": "uuid|null", "speakerId": "uuid", "text": "…", "instructions": "…" },
     { "op": "edit",    "lineId": "uuid", "patch": { "speakerId": "uuid", "text": "…", "instructions": "…" } },
     { "op": "delete",  "lineId": "uuid" },
     { "op": "reorder", "lineIds": ["uuid", "uuid", "…"] }

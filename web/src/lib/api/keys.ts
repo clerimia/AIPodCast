@@ -6,6 +6,8 @@ export const qk = {
   episodes: (wsId: string) => ['episodes', wsId] as const,
   episode: (episodeId: string) => ['episode', episodeId] as const,
   script: (episodeId: string) => ['script', episodeId] as const,
+  /** 素材已作废的行 id（提交改动后写入；音频区据此亮「需重新合成」，整集合成成功后清除） */
+  restale: (episodeId: string) => ['restale', episodeId] as const,
   artifact: (episodeId: string) => ['artifact', episodeId] as const,
   synthesisJob: (jobId: string) => ['synthesis-job', jobId] as const,
 }

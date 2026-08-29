@@ -71,6 +71,16 @@ export interface Episode {
   createdAt: string
 }
 
+/** GET /episodes/:id —— 单集详情（M2：artifact 恒 null，M5 起为产物摘要） */
+export interface EpisodeDetail {
+  id: string
+  wsId: string
+  title: string
+  showNotes: string
+  postRules: PostRules
+  artifact: null
+}
+
 /** 集级后期默认规则 */
 export interface PostRules {
   pause: Pause
@@ -101,7 +111,15 @@ export interface Script {
 
 // ---- 暂存/确认门（ADR-0003）----
 export type ChangeOp =
-  | { op: 'add'; afterLineId: string | null; speakerId: string; text: string; instructions?: string }
+  | {
+      op: 'add'
+      /** 可选客户端预生成行 id：同提交内后续 op（afterLineId/reorder）引用暂存新增行时必需 */
+      id?: string
+      afterLineId: string | null
+      speakerId: string
+      text: string
+      instructions?: string
+    }
   | { op: 'edit'; lineId: string; patch: { speakerId?: string; text?: string; instructions?: string } }
   | { op: 'delete'; lineId: string }
   | { op: 'reorder'; lineIds: string[] }
@@ -111,9 +129,11 @@ export interface ChangesRequest {
   summary?: string
 }
 
+/** POST /changes 响应：新脚本 + 素材已作废的行（「需重新合成」标记依据） */
 export interface ChangesResponse {
   changeSetId: string
   invalidatedLineIds: string[]
+  lines: ScriptLine[]
 }
 
 // ---- 合成与产物 ----

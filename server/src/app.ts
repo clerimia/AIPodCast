@@ -1,6 +1,7 @@
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify'
 import { createDb, type Db } from './db/client.js'
 import { healthRoutes } from './modules/health/routes.js'
+import { scriptRoutes } from './modules/script/routes.js'
 import { workspaceRoutes } from './modules/workspaces/routes.js'
 import { AppError, type ErrorPayload } from './shared/errors.js'
 import { env } from './env.js'
@@ -59,6 +60,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
 
   await app.register(healthRoutes, { prefix: '/api' })
   await app.register(workspaceRoutes, { prefix: '/api/workspaces' })
+  await app.register(scriptRoutes, { prefix: '/api/episodes' })
 
   return app
 }
