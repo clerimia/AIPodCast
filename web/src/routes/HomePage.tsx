@@ -13,13 +13,14 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { useEpisodes, useWorkspaces } from '@/hooks/useWorkspace'
+import { useWorkspaces } from '@/hooks/useWorkspace'
 import { apiErrorMessage } from '@/lib/api/http'
 import { qk } from '@/lib/api/keys'
 import { workspaceApi } from '@/lib/api/workspace'
 import type { Workspace } from '@/lib/api/types'
 
-// 工作间列表（#20 路由表 /）：列工作间 / 建工作间 / 建单集并进入。
+// 工作间列表（#20 路由表 /）：列工作间 / 建工作间。
+// 工作间卡片点击进入工作间页面（单集列表与建单集在那边，不再堆在卡片里）。
 export default function HomePage() {
   const queryClient = useQueryClient()
   const workspaces = useWorkspaces()
@@ -86,70 +87,31 @@ export default function HomePage() {
 
 function WorkspaceCard({ ws }: { ws: Workspace }) {
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
-  const episodes = useEpisodes(ws.id)
-  const [title, setTitle] = useState('')
-
-  // 建单集并直接进入编辑页（M1 收尾链路的最后一跳）
-  const createEpisode = useMutation({
-    mutationFn: () => workspaceApi.createEpisode(ws.id, { title: title.trim() }),
-    onSuccess: (ep) => {
-      setTitle('')
-      void queryClient.invalidateQueries({ queryKey: qk.episodes(ws.id) })
-      navigate(`/workspaces/${ws.id}/episodes/${ep.id}`)
-    },
-    onError: (e) => toast.error(`建单集失败：${apiErrorMessage(e)}`),
-  })
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault()
-    if (title.trim() !== '') createEpisode.mutate()
-  }
 
   return (
-    <Card>
+    <Card
+      className="cursor-pointer transition-colors hover:bg-accent/40"
+      onClick={() => navigate(`/workspaces/${ws.id}`)}
+    >
       <CardHeader>
-        <CardTitle className="text-lg">{ws.name}</CardTitle>
+        <CardTitle className="text-lg">
+          <Link
+            to={`/workspaces/${ws.id}`}
+            className="hover:underline"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {ws.name}
+          </Link>
+        </CardTitle>
         <CardDescription>{new Date(ws.createdAt).toLocaleDateString()} 创建</CardDescription>
         <CardAction>
-          <Button asChild variant="ghost" size="sm">
+          <Button asChild variant="ghost" size="sm" onClick={(e) => e.stopPropagation()}>
             <Link to={`/workspaces/${ws.id}/settings`}>设置</Link>
           </Button>
         </CardAction>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {episodes.isPending && <p className="text-sm text-muted-foreground">单集加载中…</p>}
-        {episodes.data && episodes.data.length === 0 && (
-          <p className="text-sm text-muted-foreground">还没有单集。</p>
-        )}
-        <ul className="space-y-1">
-          {episodes.data?.map((ep) => (
-            <li key={ep.id}>
-              <Link
-                to={`/workspaces/${ws.id}/episodes/${ep.id}`}
-                className="block rounded-md px-2 py-1 text-sm hover:bg-accent"
-              >
-                {ep.title}
-              </Link>
-            </li>
-          ))}
-        </ul>
-        <form className="flex items-center gap-2" onSubmit={submit}>
-          <Input
-            className="h-8 w-full"
-            placeholder="新单集标题"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-          />
-          <Button
-            type="submit"
-            size="sm"
-            variant="secondary"
-            disabled={title.trim() === '' || createEpisode.isPending}
-          >
-            {createEpisode.isPending ? '创建中…' : '建单集'}
-          </Button>
-        </form>
+      <CardContent className="text-sm text-muted-foreground">
+        点卡片进入工作间：列单集、建单集并开始写稿。
       </CardContent>
     </Card>
   )

@@ -32,8 +32,8 @@ export default function EpisodePage() {
   return (
     <div className="flex h-svh flex-col">
       <header className="flex items-center gap-2 border-b px-3 py-2">
-        <Button asChild variant="ghost" size="icon-sm" aria-label="返回工作间列表">
-          <Link to="/">←</Link>
+        <Button asChild variant="ghost" size="icon-sm" aria-label="返回工作间页面">
+          <Link to={`/workspaces/${wsId}`}>←</Link>
         </Button>
         <h1 className="min-w-0 truncate text-base font-semibold">
           {episode.isPending ? '加载中…' : (episode.data?.title ?? '单集')}
