@@ -662,32 +662,34 @@ function makeWriterResourceLoader(episodeId: string, scriptService: ScriptServic
 5. **SettingsManager**：用 `SettingsManager.inMemory(...)` 并显式关掉 compaction / retry（`12-full-control.ts:29-32`；`SettingsManager.inMemory` 见 `<pkg>/docs/sdk.md` Settings 一节），避免后台自动压缩/重试的副作用。
 6. **凭证/模型目录**：`ModelRuntime.create({ authPath, modelsPath })` 指向应用自己的目录，别落到 `~/.pi/agent`（`12-full-control.ts:17-20`）。
 7. `createExtensionRuntime()` 是构造 loader 时需要的导出（`<pkg>/dist/index.d.ts:8`）。
+8. **实现侧定案（2026-08-29）**：手写 loader 改为 **`DefaultResourceLoader` + 选项**（`systemPrompt` + `noExtensions/noSkills/noPromptTemplates/noThemes/noContextFiles: true` + `extensionFactories: [...]`）——factory→`Extension` 的加载（`handlers` Map）由 SDK 自己做，手写 `getExtensions()` 需复刻 `loadExtensionFromFactory` 不值得。**必须 `await loader.reload()` 后再传入**：`createAgentSession` 只对自己新建的 loader 调 `reload()`（`sdk.js:77` 仅 `if (!resourceLoader)` 分支），而 `DefaultResourceLoader` 是惰性的，不 reload 则 `getSystemPrompt()`/`getExtensions()` 返回空（spike 踩过）。
 
 ### 6.3 Layer 2：`before_agent_start` InlineExtension（每轮覆盖第六层）
 
-Layer 2 的 `before_agent_start` handler 通过 InlineExtension 注册（handler 经 loader 的 `getExtensions()` 返回，per-episode 闭包持有 `episodeId` 与 service 句柄）：
+Layer 2 的 `before_agent_start` handler 以 ExtensionFactory 形状经 loader 的 `extensionFactories` 注册（per-episode 闭包持有 `episodeId` 与 service 句柄）。**v0.84.4 实测形状**：`InlineExtension = ExtensionFactory | { name, factory, hidden? }`，其中 `ExtensionFactory = (pi: ExtensionAPI) => void | Promise<void>`（`extensions/types.d.ts:1151-1160`）——本配方早期草稿写的 `{ name, setup(api) }` 形状在 0.84.4 **不存在**，官方样例 `examples/extensions/prompt-customizer.ts` 即 factory 形状：
 
 ```ts
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-function writerBeforeAgentStartExtension(episodeId: string): InlineExtension {
-  return {
-    name: "writer-metadata",
-    setup(api: ExtensionAPI) {
-      api.on("before_agent_start", async (event) => {
-        // 每轮从 DB 读当前节目元数据 + 说话人快照（第六层）
-        const meta = await loadShowMetadata(episodeId);      // 节目大纲/主题/口吻/术语/禁词/节目简介
-        const speakers = await loadSpeakers(episodeId);      // 说话人快照（名称+人设+性别）
-        const layer6 = formatMetadataLayer(meta, speakers);  // "## 节目信息与说话人\n..."
-        // 覆盖到末尾（event.systemPrompt = _baseSystemPrompt，含静态五层 + 工具段）
-        return { systemPrompt: event.systemPrompt + "\n\n" + layer6 };
-      });
-    },
+function writerBeforeAgentStartExtension(
+  episodeId: string,
+): ExtensionFactory {
+  return (pi: ExtensionAPI) => {
+    pi.on("before_agent_start", async (event) => {
+      // 每轮从 DB 读当前节目元数据 + 说话人快照（第六层）
+      const meta = await loadShowMetadata(episodeId);
+      const speakers = await loadSpeakers(episodeId);
+      const layer6 = formatMetadataLayer(meta, speakers); // "## 节目信息与说话人\n..."
+      // 覆盖到末尾（event.systemPrompt = _baseSystemPrompt，含静态五层 + 工具段）
+      return { systemPrompt: event.systemPrompt + "\n\n" + layer6 };
+    });
   };
 }
 ```
 
-核对：`BeforeAgentStartEvent`（`extensions/types.d.ts:536-549`）携带 `systemPrompt`（缓存住的 `_baseSystemPrompt`）与 `systemPromptOptions`；`BeforeAgentStartEventResult.systemPrompt`（`:847-851`）替换本轮。`InlineExtension` 经 `getExtensions()` 返回后由 `ExtensionRunner` 绑定，`emitBeforeAgentStart`（`extensions/runner.js:881-930`）链式调用各 handler。
+核对：`BeforeAgentStartEvent`（`extensions/types.d.ts:536-549`）携带 `systemPrompt`（缓存住的 `_baseSystemPrompt`）与 `systemPromptOptions`；`BeforeAgentStartEventResult.systemPrompt`（`:847-851`）替换本轮。factory 经 `DefaultResourceLoader.loadExtensionFactories`（`resource-loader.js:741`，`loadExtensionFromFactory`）加载成 `Extension` 后由 `ExtensionRunner` 绑定，`emitBeforeAgentStart`（`extensions/runner.js`）链式调用各 handler。
+
+> **实现已验证（2026-08-29 spike，`server/scripts/spike-pi-embed.ts`）**：改元数据后下一轮 prompt 末尾含新值；未改时逐字节相同（sha256 对比）；`sendCustomMessage(triggerTurn:false)` 不触发回合。
 
 ---
 
@@ -715,16 +717,23 @@ function writerBeforeAgentStartExtension(episodeId: string): InlineExtension {
 
 ## 附：未确证 / 待实现阶段验证项
 
-1. DashScope 专属端点 `https://llm-3xmgkuxxgaorb0ho.cn-beijing.maas.aliyuncs.com/compatible-mode/v1` 是否接受 pi 默认的 `developer` role 与 `reasoning_effort`——文档只给出通用 `supportsDeveloperRole` / `supportsReasoningEffort` 开关（`docs/models.md:39`），未针对该 URL 验证。实现前用最小请求验证，必要时加 `compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, thinkingFormat: "qwen" }`。
+> **2026-08-29 spike 后状态更新**（`server/scripts/spike-pi-embed.ts` + 原始 HTTP 探针）：
+
+1. ~~DashScope 专属端点是否接受 pi 默认 `developer` role 与 `reasoning_effort`~~ **已验证**：`developer` role 被 400 拒绝（`developer is not one of ['system', 'assistant', 'user', 'tool', 'function']`）→ 需 `compat.supportsDeveloperRole: false`；`reasoning_effort`/`enable_thinking` 均 200 接受；SDK 全链路配 `thinkingFormat: "qwen"` 跑通（工具调用 `finish_reason: "tool_calls"` 正常，#19 验证项 1 的 `tool_execution_start` 真发出）。模型 id `qwen3.7-plus` 与 `qwen-plus` 均可用。
 2. `ProviderConfigInput`（编程注册 provider 的内部类型名）未从包根导出；根导出的是 `ProviderConfig`。TS 中建议直接用根导出的 `ProviderConfig` 类型或内联对象，避免 import 内部路径。
-3. 自定义工具与内置工具同名（`read`/`edit`）的覆盖行为已从 `dist/core/agent-session.js:2054, 2082` 源码确证为「自定义胜出」；但仍建议在实现阶段写一个最小集成测试实际触发一次 `read` 工具调用，确认拿到的是自定义实现而非内置实现。
-4. **Layer 2 每轮覆盖生效**（§6.3）：改了设置页元数据（节目元数据/说话人）后，下一轮 `prompt` 里确实是新值。验收方式：spike 里改元数据 -> 发消息 -> 断言实际发往 LLM 的 system prompt 末尾含新值（可在 `before_agent_start` handler 内记日志，或在 provider request 层抓包）。
-5. **InlineExtension 经 `getExtensions()` 返回的绑定路径**（§6.2/§6.3）已从 `extensions/runner.js:881-930` 与类型定义确证；但手写 loader 返回 InlineExtension 的确切形状（`name` + `setup(api)` + `api.on(...)`）建议在 spike 里先跑一次空 handler，确认 `before_agent_start` 真的触发，再接 DB 读取。
+3. ~~同名覆盖建议验证~~ **已验证**：自定义 `read` 工具 + `noTools: "builtin"` 下模型调用命中自定义实现（E2E 返回脚本行文本，非文件内容）。
+4. ~~Layer 2 每轮覆盖生效~~ **已验证**：改元数据后下一轮 prompt 末尾含新值；未改时逐字节不变（sha256）；base prompt 建会话算一次不变。
+5. ~~InlineExtension 绑定路径确认~~ **已验证**：factory 形状（`(pi) => { pi.on("before_agent_start", ...) }`）经 `DefaultResourceLoader` 的 `extensionFactories` 注册后每轮触发；注意 `{ name, setup(api) }` 形状在 0.84.4 不存在（§6.3 已修正）。
 
 ---
 
 ## 修订记录
 
+- **2026-08-29（实现期，#26 M3 落地后）**：
+  - **§6.2 要点 8**：手写空 loader 定案改为 `DefaultResourceLoader` + 选项（systemPrompt + 全关 discovery + extensionFactories），并记录「必须 `await loader.reload()`」的坑。
+  - **§6.3**：修正 v0.84.4 的 `InlineExtension` 形状——是 `ExtensionFactory`（`(pi) => { pi.on(...) }`）或 `{ name, factory }`，**不是** `{ name, setup(api) }`（早期草稿形状不存在）。
+  - **附录验证项**：1/3/4/5 已由 spike + E2E 验证（DashScope compat、同名覆盖、Layer 2 覆盖、factory 绑定）。
+  - 实现记录：writer 模块全套（`server/src/modules/writer/`）+ E2E 通过；spike 保留在 `server/scripts/spike-pi-embed.ts`（`npm run spike -w server`）。
 - **2026-08-29**（重新核对 v0.84.4 源码，对应 #26 重新讨论）：
   - **修正**：`getSystemPrompt()` 非每轮调用；每轮动态拼 prompt 的钩子是 `before_agent_start`（Layer 2）。新增 §6.0。
   - **§3.3**：会话架构从「`SessionManager.create` 单点建/恢复」改为 `Map<episodeId, AgentSession>`（懒建/恢复，共享 `modelRuntime`+`settingsManager` 单例，per-episode loader/sessionManager/customTools）；明确不用 `createAgentRuntime`（单当前会话=CLI 形态，不合 web 并发；`abort`+ChangeSet 已逼会话驻留）。

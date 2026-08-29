@@ -2,7 +2,6 @@
 // 校验（形状/档位）在路由层，约束（存在性/引用冲突/事务）在服务层；错误统一走
 // app.ts 的 setErrorHandler → { error: { code, message } }。
 import type { FastifyInstance } from 'fastify'
-import { notifyChangeSet } from '../writer/session.js'
 import { AppError } from '../../shared/errors.js'
 import { isPauseLevel, isSpeedLevel, type PauseLevel, type SpeedLevel } from '../../shared/post-params.js'
 import { asBody, isUuid, optionalString, requireUuidField, requireUuidParam } from '../../shared/validate.js'
@@ -148,7 +147,7 @@ export async function scriptRoutes(app: FastifyInstance) {
     const applied = await service.applyChanges(app.db, episodeId, ops, summary)
     if (!applied) throw new AppError('NOT_FOUND', 'episode not found', 404)
 
-    await notifyChangeSet(episodeId, { id: applied.changeSetId, summary: applied.summary })
+    await app.writer.notifyChangeSet(episodeId, { id: applied.changeSetId, summary: applied.summary })
     return applied
   })
 

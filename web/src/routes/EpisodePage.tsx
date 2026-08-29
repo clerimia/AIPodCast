@@ -3,6 +3,10 @@ import { Link, useParams } from 'react-router'
 import { Settings } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { ChatStream } from '@/features/writer-chat/ChatStream'
+import { Composer } from '@/features/writer-chat/Composer'
+import { RunStatusBar } from '@/features/writer-chat/RunStatusBar'
+import { useWriterRun } from '@/features/writer-chat/useWriterRun'
 import { ScriptLineList } from '@/features/script-panel/ScriptLineList'
 import { StagingBar } from '@/features/script-panel/StagingBar'
 import { applyOps } from '@/features/script-panel/staging'
@@ -13,12 +17,13 @@ import { apiErrorMessage } from '@/lib/api/http'
 import { useStaging } from '@/stores/staging'
 
 // 编辑页（CONTEXT.md：上半区文本编辑、下半区音频工作区，上下各自滚动）。
-// M2 落布局骨架 + 脚本面板 + 暂存条；M3 上半区左落写稿大师聊天，M4 下半区落音频工作区。
+// 上半区左 = 写稿大师聊天（M3），右 = 脚本面板；下半区音频工作区 M4 落地。
 export default function EpisodePage() {
   const { wsId = '', episodeId = '' } = useParams()
   const episode = useEpisode(episodeId)
   const workspace = useWorkspace(wsId)
   const script = useScript(episodeId)
+  const writer = useWriterRun(episodeId)
   const ops = useStaging((s) => s.buffers[episodeId]?.ops)
 
   const speakers = useMemo(() => workspace.data?.speakers ?? [], [workspace.data])
@@ -55,13 +60,24 @@ export default function EpisodePage() {
       )}
 
       <main className="grid min-h-0 flex-1 grid-rows-2">
-        {/* 上半区：文本侧（脚本面板；M3 左侧并排写稿大师聊天） */}
-        <section className="min-h-0 overflow-y-auto border-b">
-          {script.isPending ? (
-            <p className="p-4 text-sm text-muted-foreground">脚本加载中…</p>
-          ) : (
-            <ScriptLineList episodeId={episodeId} lines={lines} speakers={speakers} />
-          )}
+        {/* 上半区：文本侧（左写稿大师聊天 / 右脚本行面板） */}
+        <section className="grid min-h-0 grid-cols-2 divide-x border-b">
+          <div className="flex min-h-0 flex-col">
+            <ChatStream episodeId={episodeId} />
+            <RunStatusBar episodeId={episodeId} />
+            <Composer
+              episodeId={episodeId}
+              onSend={(text) => void writer.send(text)}
+              onStop={() => void writer.stop()}
+            />
+          </div>
+          <div className="min-h-0 overflow-y-auto">
+            {script.isPending ? (
+              <p className="p-4 text-sm text-muted-foreground">脚本加载中…</p>
+            ) : (
+              <ScriptLineList episodeId={episodeId} lines={lines} speakers={speakers} />
+            )}
+          </div>
         </section>
 
         {/* 下半区：音频工作区（M4 落试听/停顿语速/整集合成/Master 播放） */}

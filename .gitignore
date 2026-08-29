@@ -23,3 +23,6 @@ node_modules/
 
 # Media (MEDIA_ROOT: ws-{id}/ep-{id}/assets|artifacts)
 media/
+
+# 写稿会话 JSONL（SESSIONS_DIR）
+data/

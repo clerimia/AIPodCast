@@ -186,8 +186,38 @@ export interface StartSynthesisResponse {
 }
 
 // ---- 写稿大师（M3 消费）----
+export interface WriterHistoryToolCall {
+  tool: string
+  summary: string
+}
+
 export interface WriterHistoryEntry {
   role: 'user' | 'assistant'
   text: string
-  toolCalls?: { tool: string; summary: string }[]
+  toolCalls?: WriterHistoryToolCall[]
 }
+
+/** GET /episodes/:id/writer/history */
+export interface WriterHistory {
+  messages: WriterHistoryEntry[]
+}
+
+/** POST /episodes/:id/writer/abort */
+export interface WriterAbortResponse {
+  aborted: boolean
+}
+
+// ---- 写稿大师 SSE 事件词汇（#19 映射表；前端只认这套，不依赖 PI 事件名）----
+export type WriterSseEvent =
+  | { event: 'run:start'; data: Record<string, never> }
+  | { event: 'delta'; data: { delta: string } }
+  | { event: 'message:end'; data: { text: string } }
+  | { event: 'tool:start'; data: { toolCallId: string; tool: string } }
+  | {
+      event: 'tool:end'
+      data: { toolCallId: string; tool: string; ok: boolean; isError: boolean; summary: string; lineIds: string[] }
+    }
+  | { event: 'script:changed'; data: { lineIds: string[] } }
+  | { event: 'turn:end'; data: Record<string, never> }
+  | { event: 'done'; data: Record<string, never> }
+  | { event: 'error'; data: { message: string } }

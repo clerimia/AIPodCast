@@ -46,11 +46,18 @@ export interface EpisodeDetail {
 
 export interface ApplyChangesResult {
   changeSetId: string
+  /** 本次新增的行 id（add op 的 id，按 op 顺序） */
+  addedLineIds: string[]
   /** 素材已作废的行（改台词/指令/说话人的存活行 + 被删行）；纯 reorder/空 patch 不产生 */
   invalidatedLineIds: string[]
   lines: ScriptLineView[]
   /** 透传给路由层的通知编排（writer.session.notifyChangeSet） */
   summary: string | null
+}
+
+export interface ApplyChangesOptions {
+  /** ChangeSet 归属：user = 用户提交（确认门）；agent = 写稿大师工具直写（不走门，工具结果即所见，ADR-0002） */
+  kind?: 'user' | 'agent'
 }
 
 // ---- 单集详情 ----
@@ -136,6 +143,7 @@ export async function applyChanges(
   episodeId: string,
   ops: ScriptOp[],
   summary: string | null,
+  options: ApplyChangesOptions = {},
 ): Promise<ApplyChangesResult | null> {
   const applied = await db.transaction(async (tx) => {
     const [ep] = await tx
@@ -239,7 +247,7 @@ export async function applyChanges(
       .where(eq(changeSets.episodeId, episodeId))
     const [cs] = await tx
       .insert(changeSets)
-      .values({ episodeId, baseVersion: countRow?.count ?? 0, kind: 'user', summary })
+      .values({ episodeId, baseVersion: countRow?.count ?? 0, kind: options.kind ?? 'user', summary })
       .returning({ id: changeSets.id })
     await tx.insert(changeSetOps).values(
       resolved.map((op, i) => ({
@@ -264,7 +272,7 @@ export async function applyChanges(
       await tx.delete(audioAssets).where(inArray(audioAssets.scriptLineId, invalidatedLineIds))
     }
 
-    return { changeSetId: cs!.id, invalidatedLineIds, summary }
+    return { changeSetId: cs!.id, addedLineIds: result.addedIds, invalidatedLineIds, summary }
   })
 
   if (!applied) return null

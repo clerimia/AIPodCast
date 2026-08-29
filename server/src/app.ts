@@ -2,6 +2,8 @@ import Fastify, { type FastifyError, type FastifyInstance } from 'fastify'
 import { createDb, type Db } from './db/client.js'
 import { healthRoutes } from './modules/health/routes.js'
 import { scriptRoutes } from './modules/script/routes.js'
+import { writerRoutes } from './modules/writer/routes.js'
+import { WriterRuntime } from './modules/writer/session.js'
 import { workspaceRoutes } from './modules/workspaces/routes.js'
 import { AppError, type ErrorPayload } from './shared/errors.js'
 import { env } from './env.js'
@@ -9,6 +11,7 @@ import { env } from './env.js'
 declare module 'fastify' {
   interface FastifyInstance {
     db: Db
+    writer: WriterRuntime
   }
 }
 
@@ -25,7 +28,12 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
 
   const db = createDb(opts.databaseUrl ?? env.databaseUrl)
   app.decorate('db', db)
+
+  // 写稿运行时（Map<episodeId, AgentSession>）；进程退出统一 dispose（ADR-0005/配方 §3.3）
+  const writer = new WriterRuntime(db)
+  app.decorate('writer', writer)
   app.addHook('onClose', async () => {
+    await writer.dispose()
     await db.$client.end({ timeout: 1 })
   })
 
@@ -61,6 +69,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(healthRoutes, { prefix: '/api' })
   await app.register(workspaceRoutes, { prefix: '/api/workspaces' })
   await app.register(scriptRoutes, { prefix: '/api/episodes' })
+  await app.register(writerRoutes, { prefix: '/api/episodes' })
 
   return app
 }

@@ -24,12 +24,31 @@ function mediaRootEnv(): string {
   return isAbsolute(raw) ? resolve(raw) : join(repoRoot, raw)
 }
 
+// 写稿会话 JSONL 目录（SessionManager sessionDir）；相对路径同 MEDIA_ROOT 语义
+function sessionsDirEnv(): string {
+  const raw = process.env.SESSIONS_DIR
+  if (raw === undefined || raw === '') return join(repoRoot, 'data', 'sessions')
+  return isAbsolute(raw) ? resolve(raw) : join(repoRoot, raw)
+}
+
+// PI SDK 的 agentDir 落点（auth.json 凭证 / packageManager），指向应用自己的目录，避开 ~/.pi/agent
+function agentDirEnv(): string {
+  const raw = process.env.PI_AGENT_DIR
+  if (raw === undefined || raw === '') return join(repoRoot, 'data', 'agent')
+  return isAbsolute(raw) ? resolve(raw) : join(repoRoot, raw)
+}
+
 export const env = {
   port: intEnv('PORT', 3000),
   // 缺省即 docker-compose.yml 的 Postgres 17 凭据
   databaseUrl: process.env.DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/aipodcast',
   mediaRoot: mediaRootEnv(),
-  // M3 写稿 / M4 TTS 才消费；M0 只透传
+  // 写稿会话 JSONL 目录（一集一个文件，conversations.session_file 存绝对路径）
+  sessionsDir: sessionsDirEnv(),
+  // PI SDK agentDir（凭证/包管理落点；不指向 ~/.pi/agent）
+  agentDir: agentDirEnv(),
+  // 写稿 LLM（DashScope OpenAI 兼容端点）；模型 id 可按端点调整
   dashscopeApiKey: process.env.DASHSCOPE_API_KEY ?? null,
   dashscopeBaseUrl: process.env.DASHSCOPE_BASE_URL ?? null,
+  writerModel: process.env.WRITER_MODEL ?? 'qwen3.7-plus',
 } as const
