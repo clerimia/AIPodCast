@@ -134,9 +134,9 @@ type StagedOp = ChangeOp   // 直接复用 lib/api/types.ts 的 ops 联合类型
 SSE 事件 → 缓存的桥（唯一允许直接摸 QueryClient 的地方，在 `stores/writer-run.ts` 内——运行态 store 与 SSE 流生命周期同一模块统管；QueryClient 单例在 `lib/query-client.ts`）：
 
 - `script:changed` → **防抖 300ms** `invalidateQueries(['script', ep])`（一轮多工具只重拉一两次）；
-- `tool:start/tool:end` → 写运行态 store（状态条文案）；
+- `tool:start/tool:end` → 写运行态 store（状态条只留当前窗口的工具 + 累计步数；完成的调用随下一处 `message:end` 归属上一条 assistant 气泡，Task 块实时出现）；
 - `delta` / `message:end` → 流式气泡（运行态 store）；
-- `done` → 关流 + 最终 `invalidateQueries(['script'])` + 恢复输入；
+- `done` → 关流 + 最终 `invalidateQueries(['script'])` + 失效 writerHistory 对齐回放 + 恢复输入；
 - `error` → toast + 关流。
 
 **流生命周期与组件解耦**：SSE 流由 `stores/writer-run.ts` 模块级持有（`writerRunActions.send/stop`），导航离开编辑页（工作间主页/设置）流不断、store 持续更新，回来即续上；`useWriterRun` 只是纯 React 适配层（订阅 + history 装载）。服务端对客户端断连只停写流、run 照跑完（history 仍完整）。生成中回到页面跳过 history 装载（快照会覆盖 live 状态）。整页刷新仍会断流：run 在服务端跑完后经 history 可见（不重连进行中的流）。

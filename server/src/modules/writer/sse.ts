@@ -5,7 +5,7 @@
 // 过程——故 tool 错误走 tool:end.isError 呈现，error 事件只用于 run 级失败
 // （assistant 消息 stopReason=error 且 willRetry:false / 后端异常）。
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent'
-import { textContentOf, thinkingContentOf } from './text.js'
+import { briefText, textContentOf, thinkingContentOf } from './text.js'
 import type { WriterToolDetails } from './tools.js'
 
 export type BrowserSseEvent =
@@ -107,7 +107,10 @@ export function runWriterSession(
         break
       case 'tool_execution_end': {
         const details = (event.result as { details?: WriterToolDetails } | undefined)?.details
-        const summary = details?.summary ?? `${event.toolName} 完成`
+        // 摘要：工具自带 details 优先；失败且无 details 时用结果文本（红色行不再显示「add 完成」这类矛盾摘要）
+        const resultText = textContentOf((event.result as { content?: unknown } | null | undefined)?.content)
+        const summary =
+          details?.summary ?? (event.isError ? briefText(resultText) || '执行失败' : `${event.toolName} 完成`)
         const lineIds = details?.lineIds ?? []
         emit({
           event: 'tool:end',

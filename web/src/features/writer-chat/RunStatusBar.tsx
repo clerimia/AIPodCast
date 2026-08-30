@@ -1,5 +1,6 @@
-// 运行状态条：run:start → done/error 之间显示生成中 + 每个工具的状态
-// （tool:start 显示「正在…」，tool:end 落摘要，isError 标红）。
+// 运行状态条：run:start → done/error 之间显示生成中 + 当前窗口的工具状态
+// （tool:start 显示「正在…」，tool:end 落摘要，isError 标红；窗口 = 上一条
+// message:end 之后的调用，随归属进 Task 块而清空，另有累计步数防长 run 堆积）。
 // 工具中文标签上浮导出（ChatStream 的 Task 清单复用，ADR-0010）。
 import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -34,6 +35,7 @@ export function RunStatusBar({ episodeId }: { episodeId: string }) {
             : t.summary || '完成'}
         </p>
       ))}
+      {run.running && run.toolsDone > 0 && <p>本轮已完成 {run.toolsDone} 步</p>}
       {run.running && run.tools.every((t) => t.state !== 'running') && (
         <p className="flex items-center gap-1.5">
           <Loader2 className="size-3 animate-spin" /> 生成中…

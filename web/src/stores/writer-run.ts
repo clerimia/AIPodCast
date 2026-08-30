@@ -11,6 +11,7 @@ import { create } from 'zustand'
 import { toast } from 'sonner'
 import { writerApi } from '@/lib/api/writer'
 import { apiErrorMessage } from '@/lib/api/http'
+import { qk } from '@/lib/api/keys'
 import { queryClient } from '@/lib/query-client'
 import type { WriterHistoryEntry, WriterSseEvent } from '@/lib/api/types'
 
@@ -45,8 +46,10 @@ export interface RunState {
   thinkingActive: boolean
   /** run:start → done/error 之间 */
   running: boolean
-  /** 工具状态条（toolCallId → 状态） */
+  /** 工具状态条（只装当前窗口——上一条 message:end 之后的调用） */
   tools: ToolStatus[]
+  /** 本轮累计完成的工具调用数（跨气泡累计，状态条进度用） */
+  toolsDone: number
   /** 本轮错误（error 事件或流层失败） */
   error: string | null
 }
@@ -58,11 +61,27 @@ const emptyRun = (history: ChatMessage[] = []): RunState => ({
   thinkingActive: false,
   running: false,
   tools: [],
+  toolsDone: 0,
   error: null,
 })
 
 function withRun(state: WriterRunState, episodeId: string, run: RunState): WriterRunState {
   return { runs: { ...state.runs, [episodeId]: run } }
+}
+
+/** 把窗口内完成的工具调用挂到末尾 assistant 气泡的 toolCalls（Task 块实时出现的关键）。
+ * 工具在其所属 assistant 消息的 message:end 之后才执行，所以窗口（上一条 message:end
+ * 之后积累的调用）属于「上一条」气泡而非新落的那条。 */
+function flushToolsToLastMessage(messages: ChatMessage[], tools: ToolStatus[]): ChatMessage[] {
+  const last = messages[messages.length - 1]
+  if (tools.length === 0 || last?.role !== 'assistant') return messages
+  return [
+    ...messages.slice(0, -1),
+    {
+      ...last,
+      toolCalls: [...(last.toolCalls ?? []), ...tools.map((t) => ({ tool: t.tool, summary: t.summary }))],
+    },
+  ]
 }
 
 export const useWriterRunStore = create<WriterRunState>(() => ({ runs: {} }))
@@ -195,16 +214,25 @@ export const writerRunActions = {
         thinkingActive: false,
         running: true,
         tools: [],
+        toolsDone: 0,
         error: null,
       })
     })
   },
 
-  /** 收尾：残留流式内容兜底落气泡（message:end 已逐条落气泡，正常为空）。
-   * 状态条不残留：done/abort 清工具清单与错误；error 仅保留错误行供阅读（下次 start 清）。 */
+  /** 收尾：残留流式内容兜底落气泡；窗口内未归属的工具调用挂到末尾 assistant 气泡。
+   * 状态条不残留：done/abort 清工具清单与错误；error 仅保留错误行供阅读（下次 start 清）。
+   * done 另失效 writerHistory：以服务端回放（toolCalls 摘要/分组）为准做最终对齐。 */
   finish(episodeId: string, outcome: 'done' | 'error' | 'abort' = 'done') {
+    if (outcome === 'done') {
+      void queryClient.invalidateQueries({ queryKey: qk.writerHistory(episodeId) })
+    }
     useWriterRunStore.setState((state) => {
       const run = state.runs[episodeId] ?? emptyRun()
+      const settled = flushToolsToLastMessage(
+        run.messages,
+        run.tools.filter((t) => t.state !== 'running'),
+      )
       const residual =
         run.streamingText !== '' || run.streamingThinking !== ''
           ? [
@@ -217,7 +245,7 @@ export const writerRunActions = {
           : []
       return withRun(state, episodeId, {
         ...run,
-        messages: [...run.messages, ...residual],
+        messages: [...settled, ...residual],
         streamingText: '',
         streamingThinking: '',
         thinkingActive: false,
@@ -254,28 +282,34 @@ function applyWriterSseEvent(episodeId: string, event: WriterSseEvent) {
         thinkingActive: false,
       }))
       break
-    case 'message:end':
+    case 'message:end': {
       // 定稿：以 message:end 为准落一条气泡（text + thinking）并清全部流式态。
       // 一轮 run 可有多条 assistant 消息（工具调用分段），每条各自成气泡；
       // thinking-only（无正文）也要落——与 history 回放一致；两者皆空（错误占位）不落。
-      write((run) => ({
-        ...run,
-        messages:
-          event.data.text !== '' || event.data.thinking
-            ? [
-                ...run.messages,
-                {
-                  role: 'assistant' as const,
-                  text: event.data.text,
-                  ...(event.data.thinking && { thinking: event.data.thinking }),
-                },
-              ]
-            : run.messages,
-        streamingText: '',
-        streamingThinking: '',
-        thinkingActive: false,
-      }))
+      // 窗口内完成的工具调用随本处归属上一条 assistant 气泡（Task 块实时出现）。
+      write((run) => {
+        const messages = flushToolsToLastMessage(run.messages, run.tools)
+        return {
+          ...run,
+          messages:
+            event.data.text !== '' || event.data.thinking
+              ? [
+                  ...messages,
+                  {
+                    role: 'assistant' as const,
+                    text: event.data.text,
+                    ...(event.data.thinking && { thinking: event.data.thinking }),
+                  },
+                ]
+              : messages,
+          streamingText: '',
+          streamingThinking: '',
+          thinkingActive: false,
+          tools: [],
+        }
+      })
       break
+    }
     case 'tool:start':
       write((run) => ({
         ...run,
@@ -285,6 +319,7 @@ function applyWriterSseEvent(episodeId: string, event: WriterSseEvent) {
     case 'tool:end':
       write((run) => ({
         ...run,
+        toolsDone: run.toolsDone + 1,
         tools: run.tools.map((t) =>
           t.toolCallId === event.data.toolCallId
             ? { ...t, state: event.data.isError ? ('error' as const) : ('ok' as const), summary: event.data.summary }
