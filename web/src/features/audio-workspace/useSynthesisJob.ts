@@ -11,6 +11,8 @@
 // （pending/running/canceling）→ 接管 jobId 继续轮询（刷新页面不丢合成）；最近一次
 // interrupted → 以 interruptedJob 返回（「上次合成被中断」横幅，新任务发起自然失效）；
 // 404 → null 静默。
+// 运行中同步（#29 验收）：doneLines 每有推进即失效 script——逐行素材落盘实时反映到
+// 行徽标（后期「已合成 · X.Xs」、写稿「需重新合成」消退），终态另有最终失效。
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -122,6 +124,21 @@ export function useSynthesisJob(episodeId: string) {
     }
     setJobId(null)
   }, [job, jobId, episodeId, queryClient, setJobId])
+
+  // 逐行进度 → 行素材状态实时同步：tts 阶段每完成一行服务端即落盘该行素材，
+  // 失效 script 让行徽标（未合成 → 已合成 · X.Xs）与「N 已合成」计数跟着任务走，
+  // 不用等终态（doneLineIds 已含该行而徽标仍「未合成」的脱节）。仅在 doneLines
+  // 变化时失效（轮询 2s 一次，进度没动不重拉）。
+  const lastDoneRef = useRef(-1)
+  useEffect(() => {
+    if (!job || !isActiveJobStatus(job.status)) {
+      lastDoneRef.current = -1
+      return
+    }
+    if (job.doneLines === lastDoneRef.current) return
+    lastDoneRef.current = job.doneLines
+    queryClient.invalidateQueries({ queryKey: qk.script(episodeId) })
+  }, [job, episodeId, queryClient])
 
   // 轮询 404（任务行不存在：进程重启丢失等异常路径）→ 停轮询 + 产物缓存失效兜底 + 清 jobId
   useEffect(() => {
