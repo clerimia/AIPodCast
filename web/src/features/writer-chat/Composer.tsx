@@ -5,7 +5,6 @@ import { useState } from 'react'
 import { Brain, Square } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { cn } from '@/lib/utils'
 import { useWriterRunStore } from '@/stores/writer-run'
 
 const THINKING_STORAGE_KEY = 'writer.thinking'
@@ -54,14 +53,15 @@ export function Composer({
     <div className="flex items-end gap-2 border-t p-2">
       <Button
         type="button"
-        variant="ghost"
+        variant={thinking ? 'default' : 'ghost'}
         size="icon-sm"
         aria-label={thinking ? '关闭思考模式' : '开启思考模式'}
         aria-pressed={thinking}
         title={thinking ? '思考模式：开（回复更慢、先想后写）' : '思考模式：关'}
-        className={cn('shrink-0', thinking && 'text-primary')}
+        className="shrink-0"
         onClick={toggleThinking}
       >
+        {/* 开/关用 variant 区分（ghost→default 实心）：主题里 primary 与 foreground 都是近黑，仅靠 text-primary 色差不可辨 */}
         <Brain />
       </Button>
       <Textarea

@@ -210,7 +210,10 @@ export const ReasoningContent = memo(
       )}
       {...props}
     >
-      <Streamdown plugins={streamdownPlugins}>{children}</Streamdown>
+      {/* 思考是补充信息：超长时收敛为固定高度内滚，不把聊天气泡撑到几千像素 */}
+      <div className="max-h-80 overflow-y-auto">
+        <Streamdown plugins={streamdownPlugins}>{children}</Streamdown>
+      </div>
     </CollapsibleContent>
   )
 );
