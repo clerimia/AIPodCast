@@ -263,9 +263,23 @@ function ToolCallRow({ call }: { call: ChatToolCall }) {
 }
 
 /** Task 折叠头的自定义面：整体在跑就转圈，跑完收成一个静态的「已改 N 步」 */
-function TaskTriggerFace({ count, running }: { count: number; running: boolean }) {
+// 作为 TaskTrigger（asChild）的直接子元素，必须透传 props：Radix Slot 把
+// onClick/data-state/aria-expanded/className 全合并给子元素，丢掉任何一个
+// 都会让折叠头失效（点不开、chevron 不转）。
+function TaskTriggerFace({
+  count,
+  running,
+  className,
+  ...props
+}: { count: number; running: boolean } & React.ComponentProps<'div'>) {
   return (
-    <div className="flex w-full cursor-pointer items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground">
+    <div
+      className={cn(
+        'flex w-full cursor-pointer items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground',
+        className,
+      )}
+      {...props}
+    >
       {running ? (
         <Loader2 className="size-3.5 animate-spin text-brand" />
       ) : (
