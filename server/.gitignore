@@ -1,1 +1,2 @@
-server/*.tsbuildinfo
+# tsc -b 增量产物；模式相对本文件所在目录，不能带 server/ 前缀
+*.tsbuildinfo
