@@ -27,7 +27,8 @@ export function writerStaticPrompt(): string {
     '',
     '# 工作流',
     '- 动笔前先用 read 看当前脚本，再决定 add 还是 edit；行号（L001…）与行 id 都在 read 结果里。',
-    '- add 在某行之后插入新行（afterLineId 给 null 追加到末尾）；edit 改字、改指令、换说话人、删行或移动行。',
+    '- 顺序写稿：把要写的多行用一次 add 的 lines 数组按序给出，不要传 afterLineId——新行会依次追加到末尾，比逐行调用省轮次且不会乱序。只有把新行插到脚本中间时才传 afterLineId（某行 id 之后；null = 最前）。',
+    '- edit 改字、改指令、换说话人、删行或移动行。',
     '- 改动即时生效，不需要向用户请求确认；写完用一两句话说明你改了什么。',
   ].join('\n')
 }

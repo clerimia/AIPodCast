@@ -3,10 +3,18 @@
 // 后期/产物。工具抛错由 SDK 捕获（error.message 回给模型，tool_execution_end
 // isError:true），故直接 throw AppError。工具改动直写生效：applyChanges 走
 // kind:'agent'（ADR-0002 工具发起的修改不追加 ChangeSet 通知、不走确认门）。
+//
+// add 锚点语义（#35 复盘 1）：afterLineId 缺省 = 追加到末尾（顺序写稿不传锚点，
+// 靠 buildAddOps 链式预生成 id 保证同批多行按序）；null = 插到最前；uuid = 插到
+// 该行之后。注意 applyOps 层 null = 最前（API 语义），「追加末尾」在工具层翻译成
+// 末行 id，两者不可混用。
 import { Type } from 'typebox'
+import { randomUUID } from 'node:crypto'
+import { asc, eq } from 'drizzle-orm'
 import { defineTool } from '@earendil-works/pi-coding-agent'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { Db } from '../../db/client.js'
+import { episodes, speakers } from '../../db/schema.js'
 import { AppError } from '../../shared/errors.js'
 import { isUuid } from '../../shared/validate.js'
 import type { ScriptOp } from '../script/apply-ops.js'
@@ -43,6 +51,51 @@ function formatLines(lines: scriptService.ScriptLineView[]): string {
     .join('\n')
 }
 
+/** 工作间说话人清单（id+name），冷启动引导用：空脚本 read 附加 + add 说话人报错提示（#35 复盘 2） */
+async function wsSpeakerListText(db: Db, episodeId: string): Promise<string> {
+  const [ep] = await db.select({ wsId: episodes.wsId }).from(episodes).where(eq(episodes.id, episodeId))
+  if (!ep) return ''
+  const rows = await db
+    .select({ id: speakers.id, name: speakers.name })
+    .from(speakers)
+    .where(eq(speakers.wsId, ep.wsId))
+    .orderBy(asc(speakers.createdAt))
+  if (rows.length === 0) return '（该工作间还没有说话人）'
+  return rows.map((s) => `- ${s.name}（speakerId=${s.id}）`).join('\n')
+}
+
+// ---- add op 构造（纯函数，可单测） ----
+
+export interface AddItemInput {
+  speakerId: string
+  text: string
+  instructions: string
+}
+
+/**
+ * 把 N 个新增行编译成链式 add op（#35 复盘 1）：
+ * 首行锚定 afterLineId（undefined = 追加末尾 → 末行 id，空脚本 → null 即最前），
+ * 后续行依次锚定前一行的预生成 id（applyOps 支持同提交内引用 add.id）。
+ * 这样顺序写稿不需要模型反复给锚点，一次调用即可按序落 N 行。
+ */
+export function buildAddOps(
+  items: AddItemInput[],
+  afterLineId: string | null | undefined,
+  lastLineId: string | null,
+  newId: () => string,
+): ScriptOp[] {
+  const ids = items.map(() => newId())
+  // 缺省锚点在编译期就归约为 string|null（追加末尾 → 末行 id；空脚本 → null 即最前）
+  const anchor: string | null = afterLineId === undefined ? lastLineId : afterLineId
+  return items.map((item, i): ScriptOp => ({
+    op: 'add',
+    id: ids[i]!,
+    afterLineId: i === 0 ? anchor : ids[i - 1]!,
+    speakerId: item.speakerId,
+    text: item.text,
+    instructions: item.instructions,
+  }))
+}
 
 export function makeWriterTools(db: Db, episodeId: string): WriterTool[] {
   const readTool = defineTool({
@@ -53,8 +106,13 @@ export function makeWriterTools(db: Db, episodeId: string): WriterTool[] {
     execute: async () => {
       const script = await scriptService.getScript(db, episodeId)
       if (!script) throw new AppError('NOT_FOUND', 'episode not found', 404)
+      let text = formatLines(script.lines)
+      // 空脚本（冷启动）：read 结果自带说话人清单，模型不用盲猜 speakerId（#35 复盘 2）
+      if (script.lines.length === 0) {
+        text += `\n\n可用说话人（speakerId 用这里的 uuid）：\n${await wsSpeakerListText(db, episodeId)}`
+      }
       return {
-        content: [{ type: 'text', text: formatLines(script.lines) }],
+        content: [{ type: 'text', text }],
         details: { summary: `读取脚本（${script.lines.length} 行）`, lineIds: [] },
       }
     },
@@ -63,42 +121,97 @@ export function makeWriterTools(db: Db, episodeId: string): WriterTool[] {
   const addTool = defineTool({
     name: 'add',
     label: '新增行',
-    description: '在脚本中新增一行（说话人 + 台词 + 指令），插到某行之后或追加到末尾。',
+    description:
+      '在脚本中新增一行或多行（按给定顺序落稿）。顺序写稿不要传 afterLineId：多行用 lines 数组一次给全，新行依次追加到脚本末尾。只有插到脚本中间时才传 afterLineId。',
     parameters: Type.Object({
-      afterLineId: Type.Union([Type.String(), Type.Null()], {
-        description: '插到该行之后；null = 追加到脚本末尾',
-      }),
-      speakerId: Type.String({ description: '说话人 id（read 结果里每行都有）' }),
-      text: Type.String({ description: '台词' }),
-      instructions: Type.Optional(Type.String({ description: '指令：这一行「怎么说」的自然语言描述' })),
+      afterLineId: Type.Optional(
+        Type.Union([Type.String(), Type.Null()], {
+          description:
+            '插入锚点：缺省 = 追加到脚本末尾（顺序写稿不要传）；null = 插到最前；行 id = 插到该行之后',
+        }),
+      ),
+      speakerId: Type.Optional(Type.String({ description: '说话人 id（单行写法；read 结果或第六层说话人里有）' })),
+      text: Type.Optional(Type.String({ description: '台词（单行写法）' })),
+      instructions: Type.Optional(
+        Type.String({ description: '指令：这一行「怎么说」的自然语言描述（单行写法）' }),
+      ),
+      lines: Type.Optional(
+        Type.Array(
+          Type.Object({
+            speakerId: Type.String({ description: '说话人 id' }),
+            text: Type.String({ description: '台词' }),
+            instructions: Type.Optional(Type.String({ description: '指令' })),
+          }),
+          {
+            description:
+              '多行写法（推荐）：按写作顺序一次给出全部新增行，逐行追加；比逐行调用省轮次且不会乱序',
+          },
+        ),
+      ),
     }),
     execute: async (_toolCallId, params) => {
-      const afterLineId = params.afterLineId === null ? null : requireUuidField(params.afterLineId, 'afterLineId')
-      const speakerId = requireUuidField(params.speakerId, 'speakerId')
-      const applied = await scriptService.applyChanges(
-        db,
-        episodeId,
-        [
-          {
-            op: 'add' as const,
-            afterLineId,
-            speakerId,
-            text: params.text,
-            instructions: params.instructions ?? '',
-          },
-        ],
-        '写稿大师新增行',
-        { kind: 'agent' },
-      )
+      // 单行写法（speakerId/text）与多行写法（lines）二选一
+      if (params.lines && (params.speakerId !== undefined || params.text !== undefined)) {
+        throw new AppError('BAD_REQUEST', 'lines 与 speakerId/text 二选一，不要混用', 400)
+      }
+      const rawItems: { speakerId: string; text: string; instructions?: string }[] = []
+      if (params.lines) {
+        rawItems.push(...params.lines)
+      } else {
+        if (params.speakerId === undefined || params.text === undefined) {
+          throw new AppError('BAD_REQUEST', '需要 lines 数组（多行）或 speakerId + text（单行）', 400)
+        }
+        rawItems.push({ speakerId: params.speakerId, text: params.text, instructions: params.instructions })
+      }
+      const items: AddItemInput[] = rawItems.map((item) => ({
+        speakerId: requireUuidField(item.speakerId, 'speakerId'),
+        text: item.text,
+        instructions: item.instructions ?? '',
+      }))
+
+      const afterLineId =
+        params.afterLineId === undefined || params.afterLineId === null
+          ? params.afterLineId
+          : requireUuidField(params.afterLineId, 'afterLineId')
+
+      // 缺省锚点 = 追加末尾：翻译成当前末行 id（空脚本 → null 即最前）
+      let lastLineId: string | null = null
+      if (afterLineId === undefined) {
+        const script = await scriptService.getScript(db, episodeId)
+        if (!script) throw new AppError('NOT_FOUND', 'episode not found', 404)
+        lastLineId = script.lines.at(-1)?.id ?? null
+      }
+
+      let applied: scriptService.ApplyChangesResult | null
+      try {
+        applied = await scriptService.applyChanges(
+          db,
+          episodeId,
+          buildAddOps(items, afterLineId, lastLineId, () => randomUUID()),
+          items.length > 1 ? `写稿大师新增 ${items.length} 行` : '写稿大师新增行',
+          { kind: 'agent' },
+        )
+      } catch (err) {
+        // 说话人引用失败：把可用说话人清单附进错误，模型一轮自纠而不是盲猜重试（#35 复盘 2）
+        if (err instanceof AppError && (err.message === 'speaker not found' || err.message.startsWith('speakerId'))) {
+          throw new AppError(err.code, `${err.message}\n可用说话人：\n${await wsSpeakerListText(db, episodeId)}`, err.statusCode)
+        }
+        throw err
+      }
       if (!applied) throw new AppError('NOT_FOUND', 'episode not found', 404)
-      const [addedId] = applied.addedLineIds
-      const added = applied.lines.find((l) => l.id === addedId)
+
+      const added = applied.addedLineIds
+        .map((id) => applied.lines.find((l) => l.id === id))
+        .filter((l) => l !== undefined)
+      const summary =
+        added.length > 1 ? `新增 ${added.length} 行（${added[0]?.serial}–${added.at(-1)?.serial}）` : `新增 ${added[0]?.serial ?? '行'}`
+      const text = `已新增 ${added
+        .map((l) => `${l.serial}（id=${l.id}）`)
+        .join('、')}：${briefText(added.map((l) => l.text).join(' / '))}`
       return {
-        content: [
-          { type: 'text', text: `已新增 ${added?.serial ?? '行'}（id=${addedId ?? '?'}）：${briefText(params.text)}` },
-        ],
+        content: [{ type: 'text', text }],
         // lineIds = 前端脚本面板的刷新依据：add 带新增行（新行无素材，invalidated 为空）
-        details: { summary: `新增 ${added?.serial ?? '行'}`, lineIds: applied.addedLineIds },
+        details: { summary, lineIds: applied.addedLineIds },
       }
     },
   })
@@ -175,13 +288,21 @@ export function makeWriterTools(db: Db, episodeId: string): WriterTool[] {
         )
       }
 
-      const applied = await scriptService.applyChanges(
-        db,
-        episodeId,
-        ops,
-        params.delete === true ? '写稿大师删除行' : hasPatch ? '写稿大师修改行' : '写稿大师移动行',
-        { kind: 'agent' },
-      )
+      let applied: scriptService.ApplyChangesResult | null
+      try {
+        applied = await scriptService.applyChanges(
+          db,
+          episodeId,
+          ops,
+          params.delete === true ? '写稿大师删除行' : hasPatch ? '写稿大师修改行' : '写稿大师移动行',
+          { kind: 'agent' },
+        )
+      } catch (err) {
+        if (err instanceof AppError && (err.message === 'speaker not found' || err.message.startsWith('speakerId'))) {
+          throw new AppError(err.code, `${err.message}\n可用说话人：\n${await wsSpeakerListText(db, episodeId)}`, err.statusCode)
+        }
+        throw err
+      }
       if (!applied) throw new AppError('NOT_FOUND', 'episode not found', 404)
 
       const target = applied.lines.find((l) => l.id === lineId)

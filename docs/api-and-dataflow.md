@@ -189,7 +189,7 @@ flowchart LR
 |---|---|---|---|
 | `run:start` | `agent_start` | `{ turnId? }` | 进入「生成中」态，禁用输入框 |
 | `delta` | `message_update` 且 `assistantMessageEvent.type === "text_delta"` | `{ delta: string }` | 追加到当前 assistant 气泡 |
-| `message:end` | `message_end`（或 `turn_end.message`） | `{ text }` | 定稿当前气泡 |
+| `message:end` | `message_end`（或 `turn_end.message`） | `{ text, thinking?, toolCalls?: [{toolCallId, tool}] }` | 定稿当前气泡；`toolCalls` = 该消息声明的工具调用（#35 复盘 3），前端按 `toolCallId` 把 `tool:end` 的摘要归属到这条气泡——无正文但有工具调用的 assistant 消息也会发本事件 |
 | `tool:start` | `tool_execution_start` | `{ toolCallId, tool: "read"\|"add"\|"edit" }` | 显示状态条「正在读/写脚本…」 |
 | `tool:end` | `tool_execution_end` | `{ toolCallId, tool, ok, isError, summary }` | 清状态条；`tool ∈ {add,edit}` 时触发脚本面板刷新 |
 | `script:changed` | 后端派生：每次 `tool_execution_end` 且 `tool ∈ {add,edit}` 后发出 | `{ lineIds: ["uuid", …] }` | 脚本行列表**重新拉取** `GET script`（DB 是真相源） |
@@ -200,6 +200,7 @@ flowchart LR
 映射规则（来自 `docs/research/pi-sdk-embedding-recipe.md`，当前在 `research/pi-sdk-embedding` 分支）：
 
 - 正文增量取 `message_update.assistantMessageEvent`：`text_start`（开气泡，隐式）→ `text_delta`（发 `delta`）→ `text_end`（发 `message:end`）。
+- `message:end.toolCalls`（#35 复盘 3）：assistant 消息 content 里的 `toolCall` 块随事件下发，是「工具调用 ↔ 消息」归属的真相源；前端不再按窗口位置推断（旧法在无正文的 assistant 消息处会漂移）。
 - `tool_execution_*` 是顶层事件，`toolName` 只可能是 `read`/`add`/`edit`（`noTools:"builtin"` + 仅三个 `customTools`）。
 - 终止用 `agent_settled`（会话层，覆盖 `agent_end` 后仍可能的重试/压缩）；`agent_end.willRetry` 为 false 且有错误时发 `error`。
 - `thinking_delta`：写稿 LLM 默认 `enable_thinking=false`，不转发；若将来开思考可在此词表补 `thinking:delta`。

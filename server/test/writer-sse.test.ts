@@ -192,7 +192,58 @@ test('read 工具不派发 script:changed；工具报错不派发且 isError:tru
   assert.deepEqual(r.events.map((e) => e.event), ['tool:end', 'tool:end'])
   const failed = r.events[1] as Extract<BrowserSseEvent, { event: 'tool:end' }>
   assert.equal(failed.data.isError, true)
-  assert.equal(failed.data.summary, 'edit 完成')
+  // 失败且无 details：摘要取结果文本，空文本回退「执行失败」（04d8a6b，不再显示「edit 完成」）
+  assert.equal(failed.data.summary, '执行失败')
+})
+
+test('assistant message_end 带 toolCall 块 → message:end 自带 toolCalls 声明（#35 归属词汇）', () => {
+  const r = run()
+  r.push(agentStart)
+  r.push({
+    type: 'message_end',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'toolCall', id: 'tc-1', name: 'add' },
+        { type: 'toolCall', id: 'tc-2', name: 'read' },
+      ],
+    },
+  } as unknown as AgentSessionEvent)
+
+  assert.deepEqual(r.events.map((e) => e.event), ['run:start', 'message:end'])
+  const end = r.events[1] as Extract<BrowserSseEvent, { event: 'message:end' }>
+  assert.equal(end.data.text, '')
+  assert.deepEqual(end.data.toolCalls, [
+    { toolCallId: 'tc-1', tool: 'add' },
+    { toolCallId: 'tc-2', tool: 'read' },
+  ])
+})
+
+test('正文 + toolCall 混合消息：text/thinking/toolCalls 三块同发', () => {
+  const r = run()
+  r.push({
+    type: 'message_end',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: '我来加两行' },
+        { type: 'toolCall', id: 'tc-9', name: 'add' },
+      ],
+    },
+  } as unknown as AgentSessionEvent)
+  const end = r.events[0] as Extract<BrowserSseEvent, { event: 'message:end' }>
+  assert.equal(end.data.text, '我来加两行')
+  assert.deepEqual(end.data.toolCalls, [{ toolCallId: 'tc-9', tool: 'add' }])
+})
+
+test('纯文本消息 message:end 不携带 toolCalls 键，词汇向后兼容', () => {
+  const r = run()
+  r.push({
+    type: 'message_end',
+    message: { role: 'assistant', content: [{ type: 'text', text: '正文' }] },
+  } as unknown as AgentSessionEvent)
+  const end = r.events[0] as Extract<BrowserSseEvent, { event: 'message:end' }>
+  assert.equal('toolCalls' in end.data, false)
 })
 
 test('正常收尾：agent_settled → done，退订，onDone(done)', () => {

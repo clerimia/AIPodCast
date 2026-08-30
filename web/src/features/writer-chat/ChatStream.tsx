@@ -126,7 +126,7 @@ function AssistantBubble({
 }: {
   text: string
   thinking?: string
-  toolCalls?: { tool: string; summary: string }[]
+  toolCalls?: { toolCallId?: string; tool: string; summary: string; state?: 'running' | 'ok' | 'error' }[]
   /** 所属 run 生成中（仅本轮气泡为 true）：默认展开，结束收起 */
   liveOpen: boolean
 }) {
@@ -148,8 +148,9 @@ function AssistantBubble({
             <TaskTrigger title={`脚本操作（${toolCalls.length} 步）`} />
             <TaskContent>
               {toolCalls.map((tc, i) => (
-                <TaskItem key={i}>
-                  {toolLabel(tc.tool)}：{tc.summary || '完成'}
+                <TaskItem key={tc.toolCallId ?? i} className={tc.state === 'error' ? 'text-destructive' : undefined}>
+                  {toolLabel(tc.tool)}：
+                  {tc.summary || (tc.state === 'running' ? '执行中…' : '完成')}
                 </TaskItem>
               ))}
             </TaskContent>

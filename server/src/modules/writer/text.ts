@@ -19,6 +19,15 @@ export function thinkingContentOf(content: unknown): string {
     .join('')
 }
 
+/** 提取消息 content 里的 toolCall 块声明（message:end 归属词汇用，#35 复盘 3） */
+export function toolCallDeclsOf(content: unknown): { toolCallId: string; tool: string }[] {
+  if (!Array.isArray(content)) return []
+  return content
+    .filter((c): c is { type: 'toolCall'; id: string; name: string } => (c as { type?: string })?.type === 'toolCall')
+    .filter((c) => typeof c.id === 'string' && c.id !== '')
+    .map((c) => ({ toolCallId: c.id, tool: c.name ?? 'tool' }))
+}
+
 /** 单行紧凑截断（回给模型/状态条/回放摘要共用） */
 export function briefText(text: string, max = 120): string {
   const oneLine = text.replace(/\s+/g, ' ').trim()

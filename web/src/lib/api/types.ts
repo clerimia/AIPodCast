@@ -225,7 +225,7 @@ export type WriterSseEvent =
   | { event: 'run:start'; data: Record<string, never> }
   | { event: 'thinking'; data: { delta: string } }
   | { event: 'delta'; data: { delta: string } }
-  | { event: 'message:end'; data: { text: string; thinking?: string } }
+  | { event: 'message:end'; data: { text: string; thinking?: string; toolCalls?: { toolCallId: string; tool: string }[] } }
   | { event: 'tool:start'; data: { toolCallId: string; tool: string } }
   | {
       event: 'tool:end'

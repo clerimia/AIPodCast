@@ -5,14 +5,20 @@
 // 过程——故 tool 错误走 tool:end.isError 呈现，error 事件只用于 run 级失败
 // （assistant 消息 stopReason=error 且 willRetry:false / 后端异常）。
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent'
-import { briefText, textContentOf, thinkingContentOf } from './text.js'
+import { briefText, textContentOf, thinkingContentOf, toolCallDeclsOf } from './text.js'
 import type { WriterToolDetails } from './tools.js'
+
+/** message:end.toolCalls 条目：该条 assistant 消息声明的工具调用（归属关系的真相源，#35 复盘 3） */
+export interface MessageEndToolCall {
+  toolCallId: string
+  tool: string
+}
 
 export type BrowserSseEvent =
   | { event: 'run:start'; data: Record<string, never> }
   | { event: 'thinking'; data: { delta: string } }
   | { event: 'delta'; data: { delta: string } }
-  | { event: 'message:end'; data: { text: string; thinking?: string } }
+  | { event: 'message:end'; data: { text: string; thinking?: string; toolCalls?: MessageEndToolCall[] } }
   | { event: 'tool:start'; data: { toolCallId: string; tool: string } }
   | {
       event: 'tool:end'
@@ -92,13 +98,26 @@ export function runWriterSession(
         }
         break
       case 'message_end': {
-        // 只回放 assistant 正文（user 消息端由请求体已知）
+        // 只回放 assistant 消息（user 消息端由请求体已知）。
+        // toolCalls（#35 复盘 3）：消息 content 里的 toolCall 块随 message:end 下发，
+        // 前端按 toolCallId 归属工具摘要，不再按窗口位置推断；无正文但有工具调用的
+        // assistant 消息也要发（否则该消息的工具会漂移到别的气泡）。
         const message = event.message as { role?: string }
         if (message.role === 'assistant') {
+          const content = (event.message as { content?: unknown }).content
           const text = messageText(event.message)
-          const thinking = thinkingContentOf((event.message as { content?: unknown }).content)
-          // 事件 data 里思考为空不携带该键（前端以 in/真值判三块）
-          if (text || thinking) emit({ event: 'message:end', data: { text, ...(thinking && { thinking }) } })
+          const thinking = thinkingContentOf(content)
+          const toolCalls = toolCallDeclsOf(content)
+          if (text || thinking || toolCalls.length > 0) {
+            emit({
+              event: 'message:end',
+              data: {
+                text,
+                ...(thinking && { thinking }),
+                ...(toolCalls.length > 0 && { toolCalls }),
+              },
+            })
+          }
         }
         break
       }
