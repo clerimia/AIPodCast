@@ -26,3 +26,6 @@ media/
 
 # 写稿会话 JSONL（SESSIONS_DIR）
 data/
+
+# Agent 工具本地目录
+.workbuddy/
