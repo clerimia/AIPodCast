@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Mic2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -11,6 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import { EmptyState } from '@/components/ui/empty-state'
 import { ApiError, apiErrorMessage } from '@/lib/api/http'
 import { qk } from '@/lib/api/keys'
 import { workspaceApi } from '@/lib/api/workspace'
@@ -62,20 +64,42 @@ export function SpeakerList({ wsId, speakers }: { wsId: string; speakers: Speake
       </CardHeader>
       <CardContent className="space-y-2">
         {speakers.length === 0 && (
-          <p className="text-sm text-muted-foreground">还没有说话人，先建一个。</p>
+          <EmptyState
+            compact
+            icon={Mic2}
+            title="还没有说话人"
+            description="说话人决定每行台词由谁说、用什么音色。建好之后脚本行才能试听和合成。"
+            action={
+              <Button
+                size="sm"
+                onClick={() => {
+                  setEditing(null)
+                  setDialogOpen(true)
+                }}
+              >
+                建说话人
+              </Button>
+            }
+          />
         )}
         {speakers.map((s) => (
           <div
             key={s.id}
-            className="flex items-start justify-between gap-3 rounded-lg border p-3"
+            className="flex items-start justify-between gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/40"
           >
-            <div className="min-w-0 space-y-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium">{s.name}</span>
-                {s.gender && <Badge variant="secondary">{s.gender}</Badge>}
-                <Badge variant="outline">{voiceLabel(s.voice)}</Badge>
+            <div className="flex min-w-0 gap-3">
+              {/* 头像色块：一眼分辨这是第几个角色，也让列表有节奏 */}
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-sm font-semibold text-brand">
+                {s.name.trim().charAt(0).toUpperCase() || '·'}
+              </span>
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">{s.name}</span>
+                  {s.gender && <Badge variant="secondary">{s.gender}</Badge>}
+                  <Badge variant="outline">{voiceLabel(s.voice)}</Badge>
+                </div>
+                {s.persona && <p className="text-sm text-muted-foreground">{s.persona}</p>}
               </div>
-              {s.persona && <p className="text-sm text-muted-foreground">{s.persona}</p>}
             </div>
             <div className="flex shrink-0 gap-1">
               <Button
@@ -91,6 +115,7 @@ export function SpeakerList({ wsId, speakers }: { wsId: string; speakers: Speake
               <Button
                 variant="ghost"
                 size="sm"
+                className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                 disabled={remove.isPending}
                 onClick={() => remove.mutate(s.id)}
               >

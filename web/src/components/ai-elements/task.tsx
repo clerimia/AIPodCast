@@ -78,7 +78,8 @@ export const TaskContent = ({
     )}
     {...props}
   >
-    <div className="mt-4 space-y-2 border-muted border-l-2 pl-4">
+    {/* 步骤清单做成时间轴细线：比原来的 mt-4 + 粗左边距更紧凑，长步骤列表不撑爆气泡 */}
+    <div className="mt-2 space-y-1.5 border-brand/25 border-l-2 pl-3">
       {children}
     </div>
   </CollapsibleContent>

@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Plus } from 'lucide-react'
+import { Link, useParams } from 'react-router'
+import { Mic2, PenLine, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { EmptyState } from '@/components/ui/empty-state'
 import { useEnsureCommitted } from '@/hooks/useEnsureCommitted'
 import { useInvalidatedLineIds } from '@/hooks/useInvalidated'
 import { episodeApi } from '@/lib/api/episode'
@@ -27,6 +29,7 @@ export function ScriptLineList({
   lines: ScriptLine[]
   speakers: Speaker[]
 }) {
+  const { wsId = '' } = useParams()
   const ops = useStaging((s) => s.buffers[episodeId]?.ops)
   const stageAdd = useStaging((s) => s.stageAdd)
   const stageDelete = useStaging((s) => s.stageDelete)
@@ -99,53 +102,74 @@ export function ScriptLineList({
     }
   }
 
+  // 没有说话人时脚本行根本没法配音——这是阻塞项，给一条能直接去解决的引导
+  if (speakers.length === 0) {
+    return (
+      <div className="mx-auto max-w-3xl p-4">
+        <EmptyState
+          icon={Mic2}
+          title="这个工作间还没有说话人"
+          description="说话人决定每行台词由谁说、用什么音色。先建一个，脚本行才能试听和合成。"
+          action={
+            <Button asChild size="sm">
+              <Link to={`/workspaces/${wsId}/settings`}>去建说话人</Link>
+            </Button>
+          }
+        />
+      </div>
+    )
+  }
+
   return (
-    <div className="mx-auto max-w-3xl space-y-3 p-4">
-      {speakers.length === 0 && (
-        <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-          这个工作间还没有说话人：先到「工作间设置」里建说话人，才能给脚本行配音。
-        </p>
-      )}
-
+    <div className="mx-auto max-w-3xl space-y-2 p-4">
       {lines.length === 0 ? (
-        <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-          还没有脚本行。点「加一行」手动写；M3 起写稿大师也会把稿写到这里。
-        </p>
+        <EmptyState
+          icon={PenLine}
+          title="还没有脚本行"
+          description="自己写可以直接「加一行」；也可以让右边的写稿大师先起个草稿，你再逐句改。"
+          action={
+            <Button size="sm" onClick={() => addAfter(null)}>
+              <Plus /> 加一行
+            </Button>
+          }
+        />
       ) : (
-        <div className="space-y-2">
-          {lines.map((line, i) => (
-            <ScriptLineRow
-              key={line.id}
-              line={line}
-              speakers={speakers}
-              staged={isStaged(ops ?? [], line.id)}
-              isFirst={i === 0}
-              isLast={i === lines.length - 1}
-              canPreview={!tempNewIds.has(line.id)}
-              needsResynth={!line.asset.has || invalidated.has(line.id)}
-              previewing={previewingId === line.id}
-              error={error?.lineId === line.id ? error.message : null}
-              audioUrl={active?.lineId === line.id ? active.url : null}
-              playToken={active?.lineId === line.id ? active.token : 0}
-              onEdit={(patch: EditPatch) => stageEdit(episodeId, line.id, patch)}
-              onPreview={(force) => void preview(line, force)}
-              onDelete={() => stageDelete(episodeId, line.id)}
-              onMoveUp={() => move(i, -1)}
-              onMoveDown={() => move(i, 1)}
-              onInsertAfter={() => addAfter(line.id)}
-            />
-          ))}
-        </div>
-      )}
+        <>
+          <div className="space-y-2">
+            {lines.map((line, i) => (
+              <ScriptLineRow
+                key={line.id}
+                line={line}
+                speakers={speakers}
+                staged={isStaged(ops ?? [], line.id)}
+                isFirst={i === 0}
+                isLast={i === lines.length - 1}
+                canPreview={!tempNewIds.has(line.id)}
+                needsResynth={!line.asset.has || invalidated.has(line.id)}
+                previewing={previewingId === line.id}
+                error={error?.lineId === line.id ? error.message : null}
+                audioUrl={active?.lineId === line.id ? active.url : null}
+                playToken={active?.lineId === line.id ? active.token : 0}
+                onEdit={(patch: EditPatch) => stageEdit(episodeId, line.id, patch)}
+                onPreview={(force) => void preview(line, force)}
+                onDelete={() => stageDelete(episodeId, line.id)}
+                onMoveUp={() => move(i, -1)}
+                onMoveDown={() => move(i, 1)}
+                onInsertAfter={() => addAfter(line.id)}
+              />
+            ))}
+          </div>
 
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={speakers.length === 0}
-        onClick={() => addAfter(lines[lines.length - 1]?.id ?? null)}
-      >
-        <Plus /> 加一行
-      </Button>
+          {/* 末尾整宽的加行条：比一个孤立的小按钮更好点，也标出了列表的结束位置 */}
+          <button
+            type="button"
+            onClick={() => addAfter(lines[lines.length - 1]?.id ?? null)}
+            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed py-2 text-xs text-muted-foreground transition-colors hover:border-brand-border hover:bg-brand-soft hover:text-foreground"
+          >
+            <Plus className="size-3.5" /> 加一行
+          </button>
+        </>
+      )}
     </div>
   )
 }

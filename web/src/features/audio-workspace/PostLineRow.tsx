@@ -1,9 +1,8 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { Loader2 } from 'lucide-react'
+import { Check, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { PauseSpeedSelect } from '@/components/script/PauseSpeedSelect'
 import { SerialBadge } from '@/components/script/SerialBadge'
-import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { episodeApi } from '@/lib/api/episode'
 import { apiErrorMessage } from '@/lib/api/http'
@@ -39,34 +38,49 @@ export function PostLineRow({
     }
   }
 
-  const status = invalidated ? (
-    <Badge variant="outline" className="border-amber-500/50 text-xs text-amber-600">
-      需重新合成
-    </Badge>
-  ) : line.asset.has ? (
-    line.asset.durationMs !== null ? (
-      <span className="text-xs text-muted-foreground">已合成 · {(line.asset.durationMs / 1000).toFixed(1)}s</span>
-    ) : (
-      <span className="text-xs text-muted-foreground">已合成</span>
-    )
-  ) : (
-    <span className="text-xs text-muted-foreground">未合成</span>
-  )
-
   return (
-    <div className={cn('flex items-center gap-2 rounded-lg border px-3 py-1.5', invalidated && 'border-amber-500/50')}>
+    <div
+      className={cn(
+        'flex items-center gap-2 rounded-lg border px-2.5 py-1.5 transition-colors',
+        invalidated && 'border-amber-500/40',
+        synthState === 'current' && 'border-brand-border bg-brand-soft',
+      )}
+    >
       <SerialBadge serial={line.serial} />
       <span className="shrink-0 text-xs text-muted-foreground">{line.speakerName}</span>
-      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{line.text}</span>
+      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={line.text}>
+        {line.text}
+      </span>
+
       {synthState === 'current' && (
-        <span className="inline-flex items-center gap-1 text-xs text-primary">
+        <span className="inline-flex shrink-0 items-center gap-1 text-xs text-brand">
           <Loader2 className="size-3 animate-spin" />
           合成中
         </span>
       )}
-      {synthState === 'done' && <span className="text-xs text-emerald-600">✓</span>}
-      {status}
-      <PauseSpeedSelect withFollowDefault value={line.post} onChange={(patch) => void patchPost(patch)} />
+      {synthState === 'done' && (
+        <span className="inline-flex shrink-0 items-center gap-1 text-xs text-emerald-600">
+          <Check className="size-3" />
+        </span>
+      )}
+
+      {invalidated ? (
+        <span className="shrink-0 rounded-full bg-amber-500/12 px-1.5 py-0.5 text-[10px] whitespace-nowrap text-amber-600">
+          需重新合成
+        </span>
+      ) : line.asset.has ? (
+        <span className="shrink-0 text-[11px] whitespace-nowrap text-muted-foreground tabular-nums">
+          已合成{line.asset.durationMs !== null && ` · ${(line.asset.durationMs / 1000).toFixed(1)}s`}
+        </span>
+      ) : (
+        <span className="shrink-0 text-[11px] whitespace-nowrap text-muted-foreground/70">未合成</span>
+      )}
+
+      <PauseSpeedSelect
+        withFollowDefault
+        value={line.post}
+        onChange={(patch) => void patchPost(patch)}
+      />
     </div>
   )
 }
