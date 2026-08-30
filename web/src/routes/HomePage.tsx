@@ -99,7 +99,6 @@ export default function HomePage() {
           </div>
           <div>
             <h1 className="text-xl font-semibold tracking-tight">Podcast Studio</h1>
-            <p className="text-sm text-muted-foreground">单用户 AI 播客工作间</p>
           </div>
         </div>
 
