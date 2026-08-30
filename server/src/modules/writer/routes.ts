@@ -9,7 +9,7 @@ import { AppError } from '../../shared/errors.js'
 import { asBody, requireUuidParam } from '../../shared/validate.js'
 import { parseWriterHistory } from './history.js'
 import { getWriterConversationRow, THINKING_LEVEL_ON } from './session.js'
-import { runWriterSession, type BrowserSseEvent } from './sse.js'
+import { runWriterSession, cleanUpstreamError, type BrowserSseEvent } from './sse.js'
 
 interface EpisodeParams {
   episodeId: string
@@ -71,7 +71,7 @@ export async function writerRoutes(app: FastifyInstance) {
     try {
       await session.prompt(text)
     } catch (err) {
-      write({ event: 'error', data: { message: err instanceof Error ? err.message : String(err) } })
+      write({ event: 'error', data: { message: cleanUpstreamError(err instanceof Error ? err.message : String(err)) } })
       close()
       return reply
     }

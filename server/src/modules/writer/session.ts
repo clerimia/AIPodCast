@@ -81,7 +81,9 @@ export class WriterRuntime {
           reasoning: true,
           input: ['text'],
           contextWindow: 131072,
-          maxTokens: 8192,
+          // 必须严格大于思考开启时端点的默认 thinking_budget（8192）：qwen format 只发
+          // enable_thinking，budget 由服务端定，max_completion_tokens <= budget 会 400
+          maxTokens: 32768,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           // spike 实测（#26）：该端点拒绝 developer role（400），enable_thinking 接受
           compat: { supportsDeveloperRole: false, thinkingFormat: 'qwen' },

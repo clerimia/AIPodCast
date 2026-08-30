@@ -28,12 +28,30 @@ function messageText(message: unknown): string {
   return textContentOf((message as { content?: unknown } | null | undefined)?.content)
 }
 
+/**
+ * SDK 上游错误的原始 message 形如 `400 data: {…}`（HTTP 状态 + 未解析的 SSE 错误体）。
+ * 尽量解析出其中 error.message 给浏览器/状态条看，解析失败原样返回。
+ */
+export function cleanUpstreamError(raw: string): string {
+  const match = /^\d{3}\s+data:\s+([\s\S]+)$/.exec(raw)
+  const json = match?.[1]
+  if (json) {
+    try {
+      const parsed = JSON.parse(json) as { error?: { message?: unknown } }
+      if (typeof parsed.error?.message === 'string') return parsed.error.message
+    } catch {
+      // 非 JSON 错误体：原样返回
+    }
+  }
+  return raw
+}
+
 /** 错误信息提取：assistant 消息 stopReason=error 时的 errorMessage */
 function runErrorOf(event: Extract<AgentSessionEvent, { type: 'agent_end' }>): string | null {
   for (const message of event.messages) {
     const m = message as { role?: string; stopReason?: string; errorMessage?: string }
     if (m.role === 'assistant' && m.stopReason === 'error') {
-      return m.errorMessage ?? '模型返回错误'
+      return m.errorMessage ? cleanUpstreamError(m.errorMessage) : '模型返回错误'
     }
   }
   return null
