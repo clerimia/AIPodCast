@@ -123,6 +123,9 @@ export function makeWriterTools(db: Db, episodeId: string): WriterTool[] {
     label: '新增行',
     description:
       '在脚本中新增一行或多行（按给定顺序落稿）。顺序写稿不要传 afterLineId：多行用 lines 数组一次给全，新行依次追加到脚本末尾。只有插到脚本中间时才传 afterLineId。',
+    // Pi 默认 toolExecution=parallel：并发 add 会各自以同一末行为锚（缺省锚点在
+    // 执行前计算），行序不确定。写脚本的两个工具强制串行（#35 复盘 1）。
+    executionMode: 'sequential',
     parameters: Type.Object({
       afterLineId: Type.Optional(
         Type.Union([Type.String(), Type.Null()], {
@@ -221,6 +224,8 @@ export function makeWriterTools(db: Db, episodeId: string): WriterTool[] {
     label: '改行',
     description:
       '修改一行：改台词/指令/说话人、删除该行（delete:true）或移动位置（moveAfterLineId）。至少提供一项改动。',
+    // 与 add 同理：moveAfterLineId 先读全序再 reorder，并发会基于陈旧顺序，强制串行
+    executionMode: 'sequential',
     parameters: Type.Object({
       lineId: Type.String({ description: '目标行 id（read 结果里每行都有）' }),
       text: Type.Optional(Type.String({ description: '新的台词' })),
