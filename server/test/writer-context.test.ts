@@ -30,7 +30,7 @@ test('第六层：固定槽位标题，空字段省略，说话人快照（名�
   assert.ok(lines.includes('- 嘉宾（speakerId=22222222-2222-4222-8222-222222222222）'))
 })
 
-test('说话人为空时不出现「说话人：」空段', () => {
+test('说话人为空时不出现「说话人：」空段，且提示模型引导用户创建', () => {
   const text = formatShowContext({
     title: 't',
     showNotes: '',
@@ -43,6 +43,8 @@ test('说话人为空时不出现「说话人：」空段', () => {
     speakers: [],
   })
   assert.ok(!text.includes('说话人：'))
+  assert.ok(text.includes('还没有可用说话人'))
+  assert.ok(text.includes('创建说话人'))
 })
 
 test('静态种子（Layer 3）不含第六层标题——动态内容只在 before_agent_start 覆盖', () => {

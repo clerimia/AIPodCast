@@ -1,8 +1,9 @@
 // 写稿大师 system prompt（docs/api-and-dataflow.md「会话生命周期」+ 配方 §6）：
 // Layer 3 = getSystemPrompt 建会话时算一次的静态种子（前五层身份），SDK 缓存为
-// _baseSystemPrompt，并自动追加工具段（read/add/edit）；Layer 2 = before_agent_start
-// 每轮把第六层（当前 DB 节目元数据 + 说话人快照）覆盖到末尾——覆盖、不累加。
-// 注意：getSystemPrompt 非每轮调用（配方 §6.0），每轮钩子是 before_agent_start。
+// _baseSystemPrompt。注意：SDK 的 buildSystemPrompt 走 customPrompt 分支时**不追加
+// 任何工具段/指南**（只补一行 Current working directory）——工具用法指引全靠本文件
+// 的「工作流」+ 工具 schema 的 description。Layer 2 = before_agent_start 每轮把第六层
+// （当前 DB 节目元数据 + 说话人快照）覆盖到末尾——覆盖、不累加。
 import { eq } from 'drizzle-orm'
 import { DefaultResourceLoader } from '@earendil-works/pi-coding-agent'
 import type { SettingsManager } from '@earendil-works/pi-coding-agent'
@@ -27,6 +28,9 @@ export function writerStaticPrompt(): string {
     '',
     '# 工作流',
     '- 动笔前先用 read 看当前脚本，再决定 add 还是 edit；行号（L001…）与行 id 都在 read 结果里。',
+    '- 引用行一律用行 id；行号会随增删整段重编，只用于给用户展示位置。',
+    '- add / edit 的返回结果已带最新行号与 id，就是最新状态——不要为「确认生效」而重复 read。',
+    '- 收到「脚本已更新」的系统提醒（用户直接改了稿）时，以提醒为准；要继续动笔前先 read 复核当前脚本。',
     '- 顺序写稿：把要写的多行用一次 add 的 lines 数组按序给出，不要传 afterLineId——新行会依次追加到末尾，比逐行调用省轮次且不会乱序。只有把新行插到脚本中间时才传 afterLineId（某行 id 之后；null = 最前）。',
     '- edit 改字、改指令、换说话人、删行或移动行。',
     '- 改动即时生效，不需要向用户请求确认；写完用一两句话说明你改了什么。',
@@ -64,6 +68,9 @@ export function formatShowContext(ctx: ShowContext): string {
       const persona = s.persona ? `：${s.persona}` : ''
       lines.push(`- ${s.name}（speakerId=${s.id}${s.gender ? `，${s.gender}` : ''}）${persona}`)
     }
+  } else {
+    // 冷启动死角：没有可用说话人时 add 必然失败，提前告知模型该做什么而不是盲试
+    lines.push('（工作间还没有可用说话人——无法新增台词，请提示用户先在工作间创建说话人）')
   }
   return lines.join('\n')
 }
