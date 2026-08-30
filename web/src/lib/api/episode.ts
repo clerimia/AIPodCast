@@ -43,6 +43,15 @@ export const episodeApi = {
   /** 合成任务轮询（GET /synthesis-jobs/:jobId）：status/stage/doneLines/totalLines + 终态 error */
   getSynthesisJob: (jobId: string) => http.get<SynthesisJob>(`/synthesis-jobs/${jobId}`),
 
+  /** 取消整集合成（#22）：pending/running → 202（status=canceling）；已在 canceling → 200；
+   * 终态 → 409；未知 → 404 */
+  cancelSynthesisJob: (jobId: string) => http.post<SynthesisJob>(`/synthesis-jobs/${jobId}/cancel`),
+
+  /** 当前活跃任务（#22 active-job）：pending/running/canceling → 快照；最近一次 interrupted
+   * → 快照（「上次合成被中断」横幅）；无 → 404（调用方吞成 null） */
+  getActiveSynthesisJob: (episodeId: string) =>
+    http.get<SynthesisJob>(`/episodes/${episodeId}/synthesis-job`),
+
   /** 产物（master mp3 + transcript + notes）；尚未合成 → 404（调用方按需吞成 null） */
   getArtifact: (episodeId: string) => http.get<Artifact>(`/episodes/${episodeId}/artifact`),
 }

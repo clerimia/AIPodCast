@@ -129,7 +129,7 @@ export default function EpisodePage() {
           <RunStatusBar episodeId={episodeId} />
           <Composer
             episodeId={episodeId}
-            onSend={(text) => void writer.send(text)}
+            onSend={(text, thinking) => void writer.send(text, thinking)}
             onStop={() => void writer.stop()}
           />
         </aside>

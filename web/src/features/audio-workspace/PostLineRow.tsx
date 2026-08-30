@@ -1,4 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query'
+import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { PauseSpeedSelect } from '@/components/script/PauseSpeedSelect'
 import { SerialBadge } from '@/components/script/SerialBadge'
@@ -59,7 +60,7 @@ export function PostLineRow({
       <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{line.text}</span>
       {synthState === 'current' && (
         <span className="inline-flex items-center gap-1 text-xs text-primary">
-          <span className="size-1.5 animate-pulse rounded-full bg-primary" />
+          <Loader2 className="size-3 animate-spin" />
           合成中
         </span>
       )}

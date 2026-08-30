@@ -7,6 +7,11 @@ export function isTerminalJobStatus(status: SynthesisStatus): boolean {
   return status === 'succeeded' || status === 'failed' || status === 'canceled' || status === 'interrupted'
 }
 
+/** 活跃态：任务仍在跑（同一单集同时只允许一个活跃任务；canceling 仍在收尾中） */
+export function isActiveJobStatus(status: SynthesisStatus): boolean {
+  return status === 'pending' || status === 'running' || status === 'canceling'
+}
+
 /** useSynthesisJob 的 refetchInterval：活跃态 2s（issue 定案），终态 false 停 */
 export function jobRefetchInterval(status: SynthesisStatus): number | false {
   return isTerminalJobStatus(status) ? false : 2000

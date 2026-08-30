@@ -11,18 +11,20 @@ export const writerApi = {
 
   /**
    * 发消息并逐帧回调浏览器事件词汇；流以 done/error 结束（或被 abort）。
+   * thinking（ADR-0010 思考开关）：true 下发 thinking:true（默认关不下发，请求体保持现状）。
    * 抛错 = 请求/流层失败（网络断、409 busy、5xx），SSE `error` 事件不抛错、走 onEvent。
    */
   async sendMessage(
     episodeId: string,
     text: string,
+    thinking: boolean,
     onEvent: (event: WriterSseEvent) => void,
     signal?: AbortSignal,
   ): Promise<void> {
     const res = await fetch(`/api/episodes/${episodeId}/writer/messages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, ...(thinking && { thinking: true }) }),
       signal,
     })
     if (!res.ok || !res.body) {

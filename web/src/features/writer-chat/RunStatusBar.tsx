@@ -1,13 +1,18 @@
 // 运行状态条：run:start → done/error 之间显示生成中 + 每个工具的状态
 // （tool:start 显示「正在…」，tool:end 落摘要，isError 标红）。
+// 工具中文标签上浮导出（ChatStream 的 Task 清单复用，ADR-0010）。
 import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useWriterRunStore } from '@/stores/writer-run'
 
 const TOOL_LABEL: Record<string, string> = {
-  read: '正在读脚本…',
-  add: '正在写脚本…',
-  edit: '正在改脚本…',
+  read: '读脚本',
+  add: '写脚本',
+  edit: '改脚本',
+}
+
+export function toolLabel(tool: string): string {
+  return TOOL_LABEL[tool] ?? tool
 }
 
 export function RunStatusBar({ episodeId }: { episodeId: string }) {
@@ -24,7 +29,9 @@ export function RunStatusBar({ episodeId }: { episodeId: string }) {
           ) : (
             <span className={cn('size-1.5 rounded-full', t.state === 'ok' ? 'bg-emerald-500' : 'bg-destructive')} />
           )}
-          {t.state === 'running' ? (TOOL_LABEL[t.tool] ?? `正在调用 ${t.tool}…`) : t.summary || '完成'}
+          {t.state === 'running'
+            ? (TOOL_LABEL[t.tool] ? `正在${TOOL_LABEL[t.tool]}…` : `正在调用 ${t.tool}…`)
+            : t.summary || '完成'}
         </p>
       ))}
       {run.running && run.tools.every((t) => t.state !== 'running') && (

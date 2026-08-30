@@ -3,6 +3,12 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 
+/* streamdown（MessageResponse/ReasoningContent 的 markdown 渲染）类名扫描：workspace 布局
+ * node_modules 在仓库根，故 ../.. 起步；插件只装 {cjk, code}（ADR-0010 裁剪） */
+@source "../../node_modules/streamdown/dist/*.js";
+@source "../../node_modules/@streamdown/cjk/dist/*.js";
+@source "../../node_modules/@streamdown/code/dist/*.js";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

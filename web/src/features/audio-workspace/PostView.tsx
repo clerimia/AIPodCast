@@ -1,9 +1,10 @@
+import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { PauseSpeedSelect, type PostLevelPatch } from '@/components/script/PauseSpeedSelect'
 import { PostLineRow } from '@/features/audio-workspace/PostLineRow'
 import { MasterPlayer } from '@/features/audio-workspace/MasterPlayer'
-import { stageLabel } from '@/features/audio-workspace/synthesis'
+import { stageLabel, isActiveJobStatus } from '@/features/audio-workspace/synthesis'
 import { useSynthesisJob } from '@/features/audio-workspace/useSynthesisJob'
 import { episodeApi } from '@/lib/api/episode'
 import { apiErrorMessage } from '@/lib/api/http'
@@ -27,7 +28,7 @@ export function PostView({ episodeId, lines }: { episodeId: string; lines: Scrip
   const invalidated = useInvalidatedLineIds(episodeId)
   const queryClient = useQueryClient()
 
-  const { job, isPolling, setJobId } = useSynthesisJob(episodeId)
+  const { job, isPolling, setJobId, interruptedJob, dismissInterrupted } = useSynthesisJob(episodeId)
   const { data: artifact } = useArtifact(episodeId)
   const ensureCommitted = useEnsureCommitted(episodeId, '整集合成')
 
@@ -62,9 +63,10 @@ export function PostView({ episodeId, lines }: { episodeId: string; lines: Scrip
   }
 
   const needsResynthCount = lines.filter((l) => !l.asset.has || invalidated.has(l.id)).length
-  // 行级进度指示（tts 阶段）：done = 已合成行；current = 正在合成的行
+  // 行级进度指示（tts 阶段）：done = 已合成行；current = 正在合成的行。
+  // canceling 期间任务仍在收尾，行级状态照样亮（实现选择：收尾中的行进度对用户仍真实）。
   const synthStateOf = (lineId: string): 'done' | 'current' | null => {
-    if (!job || job.status !== 'running' || job.stage !== 'tts') return null
+    if (!job || !isActiveJobStatus(job.status) || job.status === 'pending' || job.stage !== 'tts') return null
     if (job.doneLineIds.includes(lineId)) return 'done'
     if (job.currentLine?.lineId === lineId) return 'current'
     return null
@@ -118,6 +120,26 @@ export function PostView({ episodeId, lines }: { episodeId: string; lines: Scrip
             {isPolling ? '合成中…' : '整集合成'}
           </button>
         </div>
+        {interruptedJob && (
+          <div className="flex items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs">
+            <span className="text-amber-600">上次合成被中断（进程重启）。</span>
+            <button
+              type="button"
+              className="font-medium text-amber-600 underline underline-offset-2"
+              onClick={() => void startSynthesis()}
+            >
+              一键重新合成
+            </button>
+            <button
+              type="button"
+              aria-label="关闭中断提示"
+              className="ml-auto text-muted-foreground hover:text-foreground"
+              onClick={dismissInterrupted}
+            >
+              ×
+            </button>
+          </div>
+        )}
         {job && <SynthesisProgress job={job} lines={lines} />}
         {!job && !artifact && (
           <p className="text-xs text-muted-foreground">
@@ -131,28 +153,59 @@ export function PostView({ episodeId, lines }: { episodeId: string; lines: Scrip
   )
 }
 
-// 任务进度面板：status / stage / doneLines / totalLines（#28 验收要求可见）+ 终态 error。
-// 行级详情在上方行列表亮指示；这里给整体进度条与文案。interrupted/failed 的任务快照
-// 会在下轮 startSynthesis 后被新 jobId 覆盖。
+// 任务进度面板：status / stage / doneLines / totalLines（#28/#22 验收要求可见）+ 终态
+// error + 取消按钮（两段式：canceling 显示「取消中…」）。行级详情在上方行列表亮指示；
+// 这里给整体进度条与文案。interrupted/failed 的任务快照会在下轮 startSynthesis 后被覆盖。
 function SynthesisProgress({ job, lines }: { job: SynthesisJob; lines: ScriptLine[] }) {
+  const [canceling, setCanceling] = useState(false)
   const serialOf = new Map(lines.map((l) => [l.id, l.serial]))
+  const STATUS_LABEL: Record<string, string> = {
+    pending: '排队中',
+    running: '进行中',
+    canceling: '取消中',
+    succeeded: '完成',
+    failed: '失败',
+    canceled: '已取消',
+    interrupted: '已中断',
+  }
+
+  const cancel = async () => {
+    setCanceling(true)
+    try {
+      await episodeApi.cancelSynthesisJob(job.jobId)
+      // 202/200 都以轮询推进到 canceled 终态；不在此处 toast（终态收场统一提示）
+    } catch (e) {
+      setCanceling(false)
+      toast.error(`取消失败：${apiErrorMessage(e)}`)
+    }
+  }
+
   const percent = job.totalLines > 0 ? Math.round((job.doneLines / job.totalLines) * 100) : 0
+  const active = isActiveJobStatus(job.status)
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span className="font-medium text-foreground">
-          {job.status === 'failed' ? '失败' : job.status === 'interrupted' ? '已中断' : '进行中'}
-        </span>
+        <span className="font-medium text-foreground">{STATUS_LABEL[job.status]}</span>
         <span>{stageLabel(job.stage)}</span>
         {job.currentLine && <span>第 {job.currentLine.serial} 句…</span>}
         <span className="ml-auto tabular-nums">
           {job.doneLines}/{job.totalLines} 行
         </span>
+        {active && (
+          <button
+            type="button"
+            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+            disabled={job.status === 'canceling' || canceling}
+            onClick={() => void cancel()}
+          >
+            {job.status === 'canceling' || canceling ? '取消中…' : '取消'}
+          </button>
+        )}
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-muted">
         <div
           className="h-full rounded-full bg-primary transition-all duration-500"
-          style={{ width: `${job.status === 'failed' || job.status === 'interrupted' ? percent : Math.max(percent, 4)}%` }}
+          style={{ width: `${!active ? percent : Math.max(percent, 4)}%` }}
         />
       </div>
       {job.error && (
@@ -161,7 +214,7 @@ function SynthesisProgress({ job, lines }: { job: SynthesisJob; lines: ScriptLin
           {job.error.serial ? `（${job.error.serial}）` : ''}：{job.error.message}
         </p>
       )}
-      {job.status === 'running' && job.stage === 'tts' && (
+      {(job.status === 'running' || job.status === 'canceling') && job.stage === 'tts' && (
         <p className="text-xs text-muted-foreground">
           已完成：{job.doneLineIds.map((id) => serialOf.get(id) ?? '·').join('、') || '—'}
         </p>

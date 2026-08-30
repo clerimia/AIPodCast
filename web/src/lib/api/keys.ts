@@ -15,4 +15,6 @@ export const qk = {
   /** 整集合成 jobId（客户端状态，无服务端来源）：useSynthesisJob 经 setQueryData 写/清，
    * 写稿/后期视图切换不丢轮询（页面刷新即失——运行期句柄本就在服务端进程内） */
   synthesisJobId: (episodeId: string) => ['synthesis-job-id', episodeId] as const,
+  /** 当前活跃任务（#22 active-job 端点）：页面挂载/无轮询目标时查，刷新页面凭它重新挂上轮询 */
+  activeSynthesisJob: (episodeId: string) => ['active-synthesis-job', episodeId] as const,
 }

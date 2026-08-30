@@ -170,8 +170,10 @@ export interface Artifact {
   notes: string | null
 }
 
-/** GET /synthesis-jobs/:jobId（#22 扩展后全量形状） */
+/** GET /synthesis-jobs/:jobId 与 GET /episodes/:id/synthesis-job（#22 扩展后全量形状） */
 export interface SynthesisJob {
+  jobId: string
+  episodeId: string
   status: SynthesisStatus
   stage: SynthesisStage | null
   doneLines: number
@@ -202,6 +204,8 @@ export interface WriterHistoryToolCall {
 export interface WriterHistoryEntry {
   role: 'user' | 'assistant'
   text: string
+  /** 思考块（ADR-0010）；关 = 无此键 */
+  thinking?: string
   toolCalls?: WriterHistoryToolCall[]
 }
 
@@ -216,10 +220,12 @@ export interface WriterAbortResponse {
 }
 
 // ---- 写稿大师 SSE 事件词汇（#19 映射表；前端只认这套，不依赖 PI 事件名）----
+// thinking 事件（ADR-0010）：仅思考开启时出现；关 = 无思考事件，词汇向后兼容
 export type WriterSseEvent =
   | { event: 'run:start'; data: Record<string, never> }
+  | { event: 'thinking'; data: { delta: string } }
   | { event: 'delta'; data: { delta: string } }
-  | { event: 'message:end'; data: { text: string } }
+  | { event: 'message:end'; data: { text: string; thinking?: string } }
   | { event: 'tool:start'; data: { toolCallId: string; tool: string } }
   | {
       event: 'tool:end'

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
+import { transcriptEntryAt } from '@/features/audio-workspace/transcript'
 import { cn } from '@/lib/utils'
 import type { Artifact, ScriptLine } from '@/lib/api/types'
 
@@ -7,6 +8,7 @@ import type { Artifact, ScriptLine } from '@/lib/api/types'
 // 当前行高亮（startMs ≤ t < endMs）+ 自动滚动。transcript 时间轴是后处理管线回填的
 // 确定性时间（±150ms 校验过），高亮随播放自然推进。行文本以 artifact.transcript
 // 为准（合成时快照），脚本后续改动不影响已合成产物。
+// 查找用二分（#29 验证项 2，transcript.ts 纯函数）；timeupdate 本身 ~4Hz 天然节流。
 export function MasterPlayer({ artifact, lines }: { artifact: Artifact; lines: ScriptLine[] }) {
   const audioRef = useRef<HTMLAudioElement>(null)
   const [playingSerial, setPlayingSerial] = useState<string | null>(null)
@@ -18,8 +20,7 @@ export function MasterPlayer({ artifact, lines }: { artifact: Artifact; lines: S
   const onTimeUpdate = () => {
     const audio = audioRef.current
     if (!audio) return
-    const ms = audio.currentTime * 1000
-    const entry = artifact.transcript.find((t) => ms >= t.startMs && ms < t.endMs)
+    const entry = transcriptEntryAt(artifact.transcript, audio.currentTime * 1000)
     setPlayingSerial(entry?.serial ?? null)
   }
 
