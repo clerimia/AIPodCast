@@ -3,7 +3,7 @@
 // change_set 等 display:false 的 custom_message 不回放；条目结构对齐 SessionEntry。
 import { existsSync, readFileSync } from 'node:fs'
 import { parseSessionEntries, type FileEntry, type SessionMessageEntry } from '@earendil-works/pi-coding-agent'
-import { briefText, textContentOf } from './text.js'
+import { briefText, textContentOf, thinkingContentOf } from './text.js'
 
 export interface WriterHistoryToolCall {
   tool: string
@@ -13,6 +13,8 @@ export interface WriterHistoryToolCall {
 export interface WriterHistoryEntry {
   role: 'user' | 'assistant'
   text: string
+  /** 思考块内容（ADR-0010；关 = 无此键，回放自然退化为两块） */
+  thinking?: string
   toolCalls?: WriterHistoryToolCall[]
 }
 
@@ -58,7 +60,7 @@ export function parseWriterHistory(sessionFile: string | null | undefined): Writ
       continue
     }
     if (message.role === 'assistant') {
-      // content 里的 toolCall 块 → toolCalls（摘要取对应 toolResult）
+      // content 里的 toolCall 块 → toolCalls（摘要取对应 toolResult）；thinking 块 → 回放（ADR-0010）
       const blocks = Array.isArray(message.content) ? (message.content as Array<Record<string, unknown>>) : []
       const toolCalls: WriterHistoryToolCall[] = []
       for (const block of blocks) {
@@ -73,9 +75,15 @@ export function parseWriterHistory(sessionFile: string | null | undefined): Writ
         .filter((b) => b.type === 'text')
         .map((b) => b.text as string)
         .join('')
-      // 错误占位消息（无正文无工具调用）不回放
-      if (!text && toolCalls.length === 0) continue
-      out.push({ role: 'assistant', text, ...(toolCalls.length > 0 && { toolCalls }) })
+      const thinking = thinkingContentOf(blocks)
+      // 错误占位消息（无正文无思考无工具调用）不回放
+      if (!text && !thinking && toolCalls.length === 0) continue
+      out.push({
+        role: 'assistant',
+        text,
+        ...(thinking && { thinking }),
+        ...(toolCalls.length > 0 && { toolCalls }),
+      })
     }
     // toolResult 消息已并入 assistant.toolCalls，不单列
   }

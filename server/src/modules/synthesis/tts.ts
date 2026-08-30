@@ -19,7 +19,8 @@ export interface TtsInput {
 }
 
 export interface TtsClient {
-  synthesize(input: TtsInput): Promise<Buffer>
+  /** signal：请求级中止（#22 取消 / preview 超时共用管道）；与 30s 超时取先到 */
+  synthesize(input: TtsInput, signal?: AbortSignal): Promise<Buffer>
 }
 
 interface DashscopeTtsResponse {
@@ -39,7 +40,7 @@ export interface DashscopeTtsOptions {
 export function makeDashscopeTts(options: DashscopeTtsOptions = {}): TtsClient {
   const fetchImpl = options.fetchImpl ?? fetch
   return {
-    async synthesize(input: TtsInput): Promise<Buffer> {
+    async synthesize(input: TtsInput, signal?: AbortSignal): Promise<Buffer> {
       const apiKey = options.apiKey !== undefined ? options.apiKey : env.dashscopeApiKey
       if (!apiKey) {
         throw new AppError('INTERNAL', 'DASHSCOPE_API_KEY 未配置，TTS 不可用', 500)
@@ -47,6 +48,7 @@ export function makeDashscopeTts(options: DashscopeTtsOptions = {}): TtsClient {
       // BASE_URL 只填主机（与写稿共用）；TTS 拼原生端点，不拼 /compatible-mode/v1
       const base = (options.baseUrl ?? env.dashscopeBaseUrl ?? 'https://dashscope.aliyuncs.com').replace(/\/+$/, '')
 
+      // 外部 signal（取消/超时）与 30s 兜底超时竞速，先到者中止
       const requestInit: RequestInit = {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -59,7 +61,7 @@ export function makeDashscopeTts(options: DashscopeTtsOptions = {}): TtsClient {
             ...(input.instructions ? { instructions: input.instructions } : {}),
           },
         }),
-        signal: AbortSignal.timeout(TTS_TIMEOUT_MS),
+        signal: AbortSignal.any([AbortSignal.timeout(TTS_TIMEOUT_MS), ...(signal ? [signal] : [])]),
       }
 
       let res: Response
@@ -85,7 +87,9 @@ export function makeDashscopeTts(options: DashscopeTtsOptions = {}): TtsClient {
 
       let audio: Response
       try {
-        audio = await fetchImpl(url, { signal: AbortSignal.timeout(TTS_TIMEOUT_MS) })
+        audio = await fetchImpl(url, {
+          signal: AbortSignal.any([AbortSignal.timeout(TTS_TIMEOUT_MS), ...(signal ? [signal] : [])]),
+        })
       } catch (err) {
         throw new AppError('SYNTH_FAILED', `TTS 音频下载失败：${errMessage(err)}`, 502)
       }

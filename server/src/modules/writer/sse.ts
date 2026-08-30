@@ -5,13 +5,14 @@
 // 过程——故 tool 错误走 tool:end.isError 呈现，error 事件只用于 run 级失败
 // （assistant 消息 stopReason=error 且 willRetry:false / 后端异常）。
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent'
-import { textContentOf } from './text.js'
+import { textContentOf, thinkingContentOf } from './text.js'
 import type { WriterToolDetails } from './tools.js'
 
 export type BrowserSseEvent =
   | { event: 'run:start'; data: Record<string, never> }
+  | { event: 'thinking'; data: { delta: string } }
   | { event: 'delta'; data: { delta: string } }
-  | { event: 'message:end'; data: { text: string } }
+  | { event: 'message:end'; data: { text: string; thinking?: string } }
   | { event: 'tool:start'; data: { toolCallId: string; tool: string } }
   | {
       event: 'tool:end'
@@ -67,13 +68,19 @@ export function runWriterSession(
         if (event.assistantMessageEvent.type === 'text_delta') {
           emit({ event: 'delta', data: { delta: event.assistantMessageEvent.delta } })
         }
+        // 思考增量（ADR-0010）：仅思考开启时产生；关 = 无思考事件，词汇向后兼容
+        if (event.assistantMessageEvent.type === 'thinking_delta') {
+          emit({ event: 'thinking', data: { delta: event.assistantMessageEvent.delta } })
+        }
         break
       case 'message_end': {
         // 只回放 assistant 正文（user 消息端由请求体已知）
         const message = event.message as { role?: string }
         if (message.role === 'assistant') {
           const text = messageText(event.message)
-          if (text) emit({ event: 'message:end', data: { text } })
+          const thinking = thinkingContentOf((event.message as { content?: unknown }).content)
+          // 事件 data 里思考为空不携带该键（前端以 in/真值判三块）
+          if (text || thinking) emit({ event: 'message:end', data: { text, ...(thinking && { thinking }) } })
         }
         break
       }

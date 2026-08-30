@@ -8,7 +8,7 @@ import type { FastifyInstance } from 'fastify'
 import { AppError } from '../../shared/errors.js'
 import { asBody, requireUuidParam } from '../../shared/validate.js'
 import { parseWriterHistory } from './history.js'
-import { getWriterConversationRow } from './session.js'
+import { getWriterConversationRow, THINKING_LEVEL_ON } from './session.js'
 import { runWriterSession, type BrowserSseEvent } from './sse.js'
 
 interface EpisodeParams {
@@ -35,11 +35,17 @@ export async function writerRoutes(app: FastifyInstance) {
       throw new AppError('BAD_REQUEST', "field 'text' must be a non-empty string", 400)
     }
     const text = body.text.trim()
+    // 思考开关（ADR-0010）：默认关；校验在 getOrCreate 之前（400 优先于会话懒建）
+    if (body.thinking !== undefined && typeof body.thinking !== 'boolean') {
+      throw new AppError('BAD_REQUEST', "field 'thinking' must be a boolean", 400)
+    }
 
     const session = await app.writer.getOrCreate(episodeId)
     if (!session.isIdle) {
       throw new AppError('CONFLICT', 'writer session is busy', 409)
     }
+    // 即时生效（SDK 现成 API）：开 = low（qwen 格式 → enable_thinking:true），关 = off
+    session.setThinkingLevel(body.thinking === true ? THINKING_LEVEL_ON : 'off')
 
     // 请求即流：先开 SSE 通道，再 subscribe → prompt（事件在 prompt 期间同步发出）
     reply.raw.writeHead(200, SSE_HEADERS)

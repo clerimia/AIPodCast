@@ -35,7 +35,16 @@ export async function getWriterConversationRow(db: Db, episodeId: string) {
   return row
 }
 
+/** 新建会话的思考默认档：关（与现状行为一致；运行时可经 setThinkingLevel 切换） */
 const THINKING_LEVEL = 'off' as const
+
+/**
+ * 思考开关注入的档位（ADR-0010，M6）：开关开 = low，关 = off。
+ * qwen thinkingFormat 映射（pi-ai openai-completions）：enable_thinking = !!reasoningEffort，
+ * 即任何非 off 的 level 都 → enable_thinking:true；reasoning_effort 因 provider 注册未设
+ * supportsReasoningEffort 不会下发——正是 M4 spike 验证过 DashScope 接受的形状。
+ */
+export const THINKING_LEVEL_ON = 'low' as const
 
 export class WriterRuntime {
   private readonly sessions = new Map<string, AgentSession>()

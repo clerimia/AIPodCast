@@ -12,7 +12,7 @@ import type { JobError } from '../../db/schema.js'
 import { artifacts, audioAssets, episodes, postRules, scriptLines, speakers, synthesisJobs } from '../../db/schema.js'
 import { getArtifactView, type ArtifactView } from '../artifacts/service.js'
 import { computeGaps, SPEED_FACTOR } from '../post/gaps.js'
-import { runPostPipeline, type PostLineInput, type PostStage } from '../post/pipeline.js'
+import { PipelineCanceled, runPostPipeline, type PostLineInput, type PostStage } from '../post/pipeline.js'
 import { AppError } from '../../shared/errors.js'
 import type { LinePost, PauseLevel, SpeedLevel } from '../../shared/post-params.js'
 import { parseSerial } from '../../shared/serial.js'
@@ -136,6 +136,47 @@ export class SynthesisJobManager {
     return row.plan.includes(lineId) && !row.doneLineIds.includes(lineId)
   }
 
+  /** 活跃任务快照（#22 active-job 端点，页面重载恢复轮询）：先查活跃（pending/running/
+   * canceling），无则查最近一次 interrupted（前端横幅用），都没有 → null */
+  async getActive(episodeId: string): Promise<SynthesisJobSnapshot | null> {
+    const [active] = await this.db
+      .select({ id: synthesisJobs.id })
+      .from(synthesisJobs)
+      .where(and(eq(synthesisJobs.episodeId, episodeId), inArray(synthesisJobs.status, ACTIVE_STATUSES)))
+      .orderBy(desc(synthesisJobs.createdAt))
+      .limit(1)
+    if (active) return this.get(active.id)
+
+    const [interrupted] = await this.db
+      .select({ id: synthesisJobs.id })
+      .from(synthesisJobs)
+      .where(and(eq(synthesisJobs.episodeId, episodeId), eq(synthesisJobs.status, 'interrupted')))
+      .orderBy(desc(synthesisJobs.createdAt))
+      .limit(1)
+    return interrupted ? this.get(interrupted.id) : null
+  }
+
+  /** 请求取消（#22）：写运行期旗标 + 中止在途 TTS，DB 置 canceling（pending/running 才置，
+   * 已 canceling 幂等）。终态任务不在此处理（路由判 409）。返回置后快照。 */
+  async requestCancel(jobId: string): Promise<SynthesisJobSnapshot | null> {
+    const [row] = await this.db
+      .select({ id: synthesisJobs.id })
+      .from(synthesisJobs)
+      .where(eq(synthesisJobs.id, jobId))
+    if (!row) return null
+
+    const runtime = this.runtime.get(jobId)
+    if (runtime) {
+      runtime.cancelRequested = true
+      runtime.abort.abort()
+    }
+    await this.db
+      .update(synthesisJobs)
+      .set({ status: 'canceling', updatedAt: new Date() })
+      .where(and(eq(synthesisJobs.id, jobId), inArray(synthesisJobs.status, ['pending', 'running'])))
+    return this.get(jobId)
+  }
+
   /**
    * 发起整集合成： episode 不存在 → 404；无活行 → 400；已有活跃任务 → 409。
    * 任务行落库后进程内起 async 编排（不 await）。
@@ -224,20 +265,30 @@ export class SynthesisJobManager {
   ): Promise<void> {
     this.runtime.set(jobId, { cancelRequested: false, abort: new AbortController() })
     const tmpDir = join(this.deps.mediaRoot, 'tmp', jobId)
+    // 取消查询：旗标置位（含 PipelineCanceled 由 pipeline 抛出后的旗标态）
+    const isCanceled = () => this.runtime.get(jobId)?.cancelRequested === true
+    const signal = this.runtime.get(jobId)!.abort.signal
     try {
       await mkdir(tmpDir, { recursive: true })
-      await this.update(jobId, { status: 'running', stage: 'tts' })
+      // 条件更新（防竞态：canceling 已被置位时不得打回 running）
+      await this.db
+        .update(synthesisJobs)
+        .set({ status: 'running', stage: 'tts', updatedAt: new Date() })
+        .where(and(eq(synthesisJobs.id, jobId), eq(synthesisJobs.status, 'pending')))
 
       // 逐行取/合成素材（复用 synthesizeLine，ADR-0006）；fail-fast：单行重试仍失败即整任务 failed
       const doneLineIds: string[] = []
       for (const line of plan) {
+        if (isCanceled()) throw new PipelineCanceled()
         await this.update(jobId, { currentLine: { lineId: line.id, serial: line.serial } })
         try {
-          const view = await this.synthesizeLineWithRetry(episodeId, line)
+          const view = await this.synthesizeLineWithRetry(episodeId, line, signal, isCanceled)
           if (!view) {
             throw new AppError('SYNTH_LINE_FAILED', `${line.serial} 合成失败：行已不存在`, 500)
           }
         } catch (err) {
+          // 取消按原样向上抛（toLineError 会把 PipelineCanceled 包装成行失败）
+          if (isCanceled() || err instanceof PipelineCanceled) throw err
           throw toLineError(err, line)
         }
         doneLineIds.push(line.id)
@@ -263,7 +314,12 @@ export class SynthesisJobManager {
       }))
       const result = await this.deps.runPipeline(inputs, tmpDir, {
         onStage: (stage: PostStage) => this.update(jobId, { stage }),
+        isCanceled,
       })
+
+      // 协作式取消的最后一道：pipeline 正常返回但旗标已置 → 在途步输出随任务废弃，
+      // 不进产物落位（取消路径到不了产物替换，ADR-0007）
+      if (isCanceled()) throw new PipelineCanceled()
 
       // 整包替换：验证已过，transcript.json/notes.md 快照 + master.mp3 原子 rename 落位。
       // Windows 上刚写完的文件可能被杀软/索引器短暂锁住（EPERM），rename 带退避重试。
@@ -299,24 +355,37 @@ export class SynthesisJobManager {
 
       await this.update(jobId, { status: 'succeeded', currentLine: null })
     } catch (err) {
-      const error = toJobError(err)
-      // 落库失败不掩盖原始错误（finally 清理照常）
-      await this.update(jobId, { status: 'failed', error, currentLine: null }).catch(() => {})
+      // 取消（旗标或 pipeline 抛 PipelineCanceled）：素材保留（已落盘不动）、无产物替换、
+      // 不记错误；其余按失败落库（落库失败不掩盖原始错误，finally 清理照常）
+      if (isCanceled() || err instanceof PipelineCanceled) {
+        await this.update(jobId, { status: 'canceled', error: null, currentLine: null }).catch(() => {})
+      } else {
+        const error = toJobError(err)
+        await this.update(jobId, { status: 'failed', error, currentLine: null }).catch(() => {})
+      }
     } finally {
       await rm(tmpDir, { recursive: true, force: true }).catch(() => {})
       this.runtime.delete(jobId)
     }
   }
 
-  /** 单行重试 1 次（2s 退避）；判定见 isRetryableTtsError */
-  private async synthesizeLineWithRetry(episodeId: string, line: PlanLine) {
+  /** 单行重试 1 次（2s 退避）；判定见 isRetryableTtsError。取消旗标在重试判定与退避后
+   * 各查一次——abort 包装出的 SYNTH_FAILED 会被误判为可重试，必须先看旗标 */
+  private async synthesizeLineWithRetry(
+    episodeId: string,
+    line: PlanLine,
+    signal: AbortSignal,
+    isCanceled: () => boolean,
+  ) {
     const backoff = this.deps.lineRetryBackoffMs ?? 2000
     try {
-      return await synthesizeLine(this.db, this.deps, { episodeId, lineId: line.id })
+      return await synthesizeLine(this.db, this.deps, { episodeId, lineId: line.id, signal })
     } catch (err) {
+      if (isCanceled()) throw err
       if (!isRetryableTtsError(err)) throw err
       await new Promise((resolve) => setTimeout(resolve, backoff))
-      return synthesizeLine(this.db, this.deps, { episodeId, lineId: line.id })
+      if (isCanceled()) throw new PipelineCanceled()
+      return synthesizeLine(this.db, this.deps, { episodeId, lineId: line.id, signal })
     }
   }
 

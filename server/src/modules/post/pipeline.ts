@@ -37,11 +37,22 @@ export interface PostLineInput {
 
 export type PostStage = 'post' | 'verify' | 'encode'
 
+/** 任务取消抛出（#22）：编排层据类型识别取消路径，与真失败区分 */
+export class PipelineCanceled extends Error {
+  constructor() {
+    super('合成已取消')
+    this.name = 'PipelineCanceled'
+  }
+}
+
 export interface PostPipelineOptions {
   /** 阶段回调（编排层据此落库 stage）；回调抛错即中止流水线 */
   onStage?: (stage: PostStage) => void | Promise<void>
   /** 单步 ffmpeg 超时（缺省 runFfCli 默认） */
   stepTimeoutMs?: number
+  /** 取消旗标（#22 协作式取消）：每个 ffmpeg 步之间查询，真 → PipelineCanceled；
+   * 在途一步跑完（秒级），其输出随任务废弃 */
+  isCanceled?: () => boolean
 }
 
 export interface PostPipelineResult {
@@ -81,8 +92,13 @@ export async function runPostPipeline(
   outDir: string,
   opts: PostPipelineOptions = {},
 ): Promise<PostPipelineResult> {
-  const { stepTimeoutMs, onStage } = opts
+  const { stepTimeoutMs, onStage, isCanceled } = opts
   if (lines.length === 0) throw new AppError('BAD_REQUEST', '没有可拼接的脚本行', 400)
+
+  // 协作式取消（#22）：只在步间查询，不杀在途子进程
+  const assertNotCanceled = () => {
+    if (isCanceled?.()) throw new PipelineCanceled()
+  }
 
   // 素材完整预检（验证项「行数/素材完整」的最前置部分）：非 RIFF wav / 头解析失败即验证失败
   const renderedMs: number[] = []
@@ -105,6 +121,7 @@ export async function runPostPipeline(
   // 步 1+2：逐行渲染（atempo 仅语速 ≠ 正常时挂）+ 行前静音 gap（anullsrc 24k mono）
   const concatEntries: string[] = []
   for (let i = 0; i < lines.length; i++) {
+    assertNotCanceled()
     const line = lines[i]!
     const segPath = join(outDir, `seg-${pad(i)}.wav`)
     const filters = line.speedFactor !== 1 ? [`atempo=${line.speedFactor}`] : []
@@ -118,6 +135,7 @@ export async function runPostPipeline(
       { timeoutMs: stepTimeoutMs },
     )
     if (line.gapBeforeMs > 0) {
+      assertNotCanceled()
       const gapPath = join(outDir, `gap-${pad(i)}.wav`)
       await runFfCli(
         'ffmpeg',
@@ -135,6 +153,7 @@ export async function runPostPipeline(
   }
 
   // 步 3：concat demuxer 按行序拼接（24k mono PCM）
+  assertNotCanceled()
   const concatPath = join(outDir, 'concat.wav')
   await writeFile(join(outDir, 'list.txt'), concatEntries.join('\n'), 'utf8')
   await runFfCli(
@@ -145,6 +164,7 @@ export async function runPostPipeline(
   )
 
   // 步 4：loudnorm 两遍线性（先测后线性增益，不动动态范围）
+  assertNotCanceled()
   const target = `I=${LOUDNORM_TARGETS.I}:LRA=${LOUDNORM_TARGETS.LRA}:TP=${LOUDNORM_TARGETS.TP}`
   const pass1 = await runFfCli(
     'ffmpeg',
@@ -153,6 +173,7 @@ export async function runPostPipeline(
   )
   const measured = parseLoudnormJson(pass1.stderr)
   const normPath = join(outDir, 'norm.wav')
+  assertNotCanceled()
   await runFfCli(
     'ffmpeg',
     [
@@ -169,12 +190,14 @@ export async function runPostPipeline(
   const { transcript, totalMs } = computeTimeline(lines, renderedMs)
 
   // 步 6：确定性验证（期望 vs 实测 ≤150ms、时间戳单调连续、行数一致）
+  assertNotCanceled()
   await onStage?.('verify')
   const normMs = await ffprobeDurationMs(normPath, stepTimeoutMs)
   checkMeasuredDuration(totalMs, normMs, '拼接归一后总时长')
   checkTranscript(transcript, lines.length)
 
   // 步 7：编码产物 mp3 44.1k mono 128k CBR
+  assertNotCanceled()
   await onStage?.('encode')
   const masterPath = join(outDir, 'master.mp3')
   await runFfCli(

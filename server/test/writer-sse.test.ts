@@ -89,6 +89,57 @@ test('user 的 message_end 不回放（用户气泡由前端本地渲染）', ()
   assert.deepEqual(r.events, [])
 })
 
+test('思考增量：thinking_delta → thinking；message_end 带 thinking 块 → message:end data.thinking', () => {
+  const r = run()
+  r.push(agentStart)
+  r.push({
+    type: 'message_update',
+    message: { role: 'assistant' },
+    assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: '先想', partial: null },
+  } as unknown as AgentSessionEvent)
+  r.push({
+    type: 'message_update',
+    message: { role: 'assistant' },
+    assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: '一下', partial: null },
+  } as unknown as AgentSessionEvent)
+  r.push({
+    type: 'message_update',
+    message: { role: 'assistant' },
+    assistantMessageEvent: { type: 'text_delta', contentIndex: 1, delta: '好的', partial: null },
+  } as unknown as AgentSessionEvent)
+  r.push({
+    type: 'message_end',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: '先想一下' },
+        { type: 'text', text: '好的' },
+      ],
+    },
+  } as unknown as AgentSessionEvent)
+
+  assert.deepEqual(
+    r.events.map((e) => e.event),
+    ['run:start', 'thinking', 'thinking', 'delta', 'message:end'],
+  )
+  const thinking = r.events[1] as Extract<BrowserSseEvent, { event: 'thinking' }>
+  assert.equal(thinking.data.delta, '先想')
+  const end = r.events[4] as Extract<BrowserSseEvent, { event: 'message:end' }>
+  assert.equal(end.data.text, '好的')
+  assert.equal(end.data.thinking, '先想一下')
+})
+
+test('思考关闭（无 thinking 块）message:end 不携带 thinking 键，词汇向后兼容', () => {
+  const r = run()
+  r.push({
+    type: 'message_end',
+    message: { role: 'assistant', content: [{ type: 'text', text: '正文' }] },
+  } as unknown as AgentSessionEvent)
+  const end = r.events[0] as Extract<BrowserSseEvent, { event: 'message:end' }>
+  assert.equal(end.data.text, '正文')
+  assert.equal('thinking' in end.data, false)
+})
+
 test('add 工具：tool:start → tool:end → script:changed（lineIds 来自 details）', () => {
   const r = run()
   r.push(agentStart)

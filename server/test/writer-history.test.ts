@@ -67,7 +67,7 @@ test('user + assistant 正文 + toolCall（摘要并入）按序回放', () => {
   const parsed = parseWriterHistoryContent(content)
   assert.deepEqual(parsed, [
     { role: 'user', text: '写段开场白' },
-    { role: 'assistant', text: '好的，先读脚本。', toolCalls: [{ tool: 'add', summary: '已新增 L002（id=abc）：大家好' }] },
+    { role: 'assistant', text: '好的，先读脚本。', thinking: '内部思考', toolCalls: [{ tool: 'add', summary: '已新增 L002（id=abc）：大家好' }] },
     { role: 'assistant', text: '开场白写好了。' },
   ])
 })
@@ -140,6 +140,56 @@ test('超长 toolResult 摘要截断到 120 字符', () => {
   const [entry] = parseWriterHistoryContent(content)
   assert.equal(entry!.toolCalls![0]!.summary.length, 121) // 120 + 省略号
   assert.ok(entry!.toolCalls![0]!.summary.endsWith('…'))
+})
+
+test('assistant thinking 块 → 回放 thinking 字段（ADR-0010）；无 thinking 不携带该键', () => {
+  const content = jsonl(
+    {
+      ...base,
+      id: 'e1',
+      type: 'message',
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: '内部推演：先列大纲' },
+          { type: 'text', text: '大纲如下。' },
+        ],
+        stopReason: 'stop',
+        timestamp: 1,
+      },
+    },
+    {
+      ...base,
+      id: 'e2',
+      type: 'message',
+      message: { role: 'assistant', content: [{ type: 'text', text: '纯文本消息' }], stopReason: 'stop', timestamp: 2 },
+    },
+  )
+  const parsed = parseWriterHistoryContent(content)
+  assert.deepEqual(parsed, [
+    { role: 'assistant', text: '大纲如下。', thinking: '内部推演：先列大纲' },
+    { role: 'assistant', text: '纯文本消息' },
+  ])
+})
+
+test('仅 thinking 无正文的 assistant 消息也回放（thinking 单独成块）；三者全空仍跳过', () => {
+  const content = jsonl(
+    {
+      ...base,
+      id: 'e1',
+      type: 'message',
+      message: { role: 'assistant', content: [{ type: 'thinking', thinking: '只有思考' }], stopReason: 'stop', timestamp: 1 },
+    },
+    {
+      ...base,
+      id: 'e2',
+      type: 'message',
+      message: { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'boom', timestamp: 2 },
+    },
+  )
+  assert.deepEqual(parseWriterHistoryContent(content), [
+    { role: 'assistant', text: '', thinking: '只有思考' },
+  ])
 })
 
 // history.ts 只接受文件路径；测试经由临时文件读取

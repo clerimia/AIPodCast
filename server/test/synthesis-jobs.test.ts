@@ -7,6 +7,7 @@ import { test } from 'node:test'
 import { and, eq, inArray } from 'drizzle-orm'
 import { buildApp } from '../src/app.js'
 import { artifacts, audioAssets, episodes, scriptLines, synthesisJobs, workspaces } from '../src/db/schema.js'
+import { PipelineCanceled } from '../src/modules/post/pipeline.js'
 import type { TtsClient, TtsInput } from '../src/modules/synthesis/tts.js'
 import { AppError } from '../src/shared/errors.js'
 import { makeWav } from './helpers.js'
@@ -16,6 +17,7 @@ import { makeWav } from './helpers.js'
 // stub TTS + 隔离 MEDIA_ROOT。覆盖：端到端成功（202 → 轮询 → artifact → 媒体流）、
 // 409 并发守卫、preview 行级互斥、单行失败 → failed（SYNTH_LINE_FAILED）、
 // 验证失败 → failed 且旧产物完好（ADR-0007）、重启孤儿任务 → interrupted。
+// M6 增量（#22）：两段式取消（canceling → canceled，素材保留旧产物不动）+ active-job 端点。
 
 type App = Awaited<ReturnType<typeof buildApp>>
 
@@ -472,5 +474,189 @@ test('级联清理：删工作间带走该集任务行与产物行（synthesis_j
   } finally {
     await f.app.close()
     await rm(f.mediaRoot, { recursive: true, force: true })
+  }
+})
+
+// ---- M6（#22）：两段式取消与 active-job ----
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** 等谓词成立（测试内联轮询） */
+async function waitFor(what: string, predicate: () => Promise<boolean> | boolean, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (await predicate()) return
+    assert.ok(Date.now() < deadline, `等待 ${what} 超时`)
+    await sleep(25)
+  }
+}
+
+test('取消（tts 阶段）：202 canceling → 幂等 200 → 放行 → canceled 终态；已落盘素材保留、无产物、tmp 清理、可再合成', async () => {
+  const f = await fixture('取消')
+  try {
+    let release: (() => void) | null = null
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let calls = 0
+    // 首行立即返回（素材落盘），次行挂起；放行时若 signal 已 aborted 则以 AbortError 失败
+    //（模拟 fetch 中止语义；挂住期间取消旗标不打断 → canceling 状态可确定性断言）
+    const gated = {
+      async synthesize(_input: TtsInput, signal?: AbortSignal) {
+        calls += 1
+        if (calls === 1) return makeWav({ dataBytes: 24000, sine: true })
+        await new Promise<void>((resolve, reject) => {
+          gate.then(() => {
+            if (signal?.aborted) reject(new DOMException('This operation was aborted', 'AbortError'))
+            else resolve()
+          })
+        })
+        return makeWav({ dataBytes: 24000, sine: true })
+      },
+    }
+    f.app.tts = gated
+    f.app.jobs.deps.tts = gated
+
+    const { body } = await synthesize(f)
+    await waitFor('首行落盘', async () => {
+      const job = await getJob(f.app, body.jobId)
+      return (job.doneLineIds as string[]).includes(f.lineIds[0]!)
+    })
+
+    // 活跃任务期间 active-job 端点返回同一任务
+    const activeRes = await f.app.inject({ method: 'GET', url: `/api/episodes/${f.episodeId}/synthesis-job` })
+    assert.equal(activeRes.statusCode, 200)
+    assert.equal((activeRes.json() as { jobId: string }).jobId, body.jobId)
+
+    // 取消：pending/running → 202 + canceling
+    const cancelRes = await f.app.inject({ method: 'POST', url: `/api/synthesis-jobs/${body.jobId}/cancel` })
+    assert.equal(cancelRes.statusCode, 202)
+    assert.equal((cancelRes.json() as { status: string }).status, 'canceling')
+    // 幂等：已在 canceling → 200 快照
+    const again = await f.app.inject({ method: 'POST', url: `/api/synthesis-jobs/${body.jobId}/cancel` })
+    assert.equal(again.statusCode, 200)
+    assert.equal((again.json() as { status: string }).status, 'canceling')
+
+    // 放行在途 TTS（signal 已 aborted → AbortError）→ canceled 终态，无 error
+    release!()
+    const job = await waitJobStatus(f.app, body.jobId, ['canceled'])
+    assert.equal(job.error, null)
+    assert.equal((job.currentLine as unknown), null)
+
+    // 已落盘素材保留（首行文件 + audio_assets 行在），在途行未落盘
+    const line0File = join(f.mediaRoot, `ws-${f.wsId}`, `ep-${f.episodeId}`, 'assets', `${f.lineIds[0]}.wav`)
+    assert.equal((await stat(line0File)).size > 0, true)
+    const assets = await f.app.db.select().from(audioAssets).where(inArray(audioAssets.scriptLineId, f.lineIds))
+    assert.equal(assets.length, 1)
+    // 无产物（取消路径到不了产物替换）
+    assert.equal(
+      (await f.app.inject({ method: 'GET', url: `/api/episodes/${f.episodeId}/artifact` })).statusCode,
+      404,
+    )
+    // 任务临时目录清理
+    await assert.rejects(stat(join(f.mediaRoot, 'tmp', body.jobId)))
+
+    // canceled 是终态：再取消 → 409；再合成可跑（首行命中复用，零 TTS 调用）
+    assert.equal(
+      (await f.app.inject({ method: 'POST', url: `/api/synthesis-jobs/${body.jobId}/cancel` })).statusCode,
+      409,
+    )
+    const callsAfterCancel = calls
+    const retry = await synthesize(f)
+    assert.equal(retry.res.statusCode, 202)
+    await waitJobStatus(f.app, retry.body.jobId, ['succeeded'])
+    assert.equal(calls, callsAfterCancel + 1)
+  } finally {
+    await teardown(f)
+  }
+})
+
+test('取消（post 阶段）：旗标经 isCanceled 进流水线，步间查到 → canceled，旧产物不动', async () => {
+  const f = await fixture('post 阶段取消')
+  try {
+    f.app.jobs.deps.runPipeline = async (_lines, _outDir, opts) => {
+      // 模拟 ffmpeg 在途步：等取消旗标置位（步间查询）再抛 PipelineCanceled
+      await waitFor('取消旗标', () => opts?.isCanceled?.() === true)
+      throw new PipelineCanceled()
+    }
+    const { body } = await synthesize(f)
+    // 等 TTS 全行完成、进 post 阶段再取消
+    await waitFor('post 阶段', async () => (await getJob(f.app, body.jobId)).stage === 'post')
+    assert.equal(
+      (await f.app.inject({ method: 'POST', url: `/api/synthesis-jobs/${body.jobId}/cancel` })).statusCode,
+      202,
+    )
+    const job = await waitJobStatus(f.app, body.jobId, ['canceled'])
+    assert.equal(job.error, null)
+    assert.equal(job.doneLines, job.totalLines)
+    // 素材全部落盘，无产物
+    const assets = await f.app.db.select().from(audioAssets).where(inArray(audioAssets.scriptLineId, f.lineIds))
+    assert.equal(assets.length, f.lineIds.length)
+    assert.equal(
+      (await f.app.inject({ method: 'GET', url: `/api/episodes/${f.episodeId}/artifact` })).statusCode,
+      404,
+    )
+  } finally {
+    await teardown(f)
+  }
+})
+
+test('active-job 端点：无任务 404；终态后 404；重启后返回最近 interrupted', async () => {
+  const f = await fixture('active-job')
+  try {
+    // 无任务 → 404
+    assert.equal(
+      (await f.app.inject({ method: 'GET', url: `/api/episodes/${f.episodeId}/synthesis-job` })).statusCode,
+      404,
+    )
+
+    // 任务 succeeded（非活跃）→ 仍 404
+    const { body } = await synthesize(f)
+    await waitJobStatus(f.app, body.jobId, ['succeeded'])
+    assert.equal(
+      (await f.app.inject({ method: 'GET', url: `/api/episodes/${f.episodeId}/synthesis-job` })).statusCode,
+      404,
+    )
+
+    // 重启收场：插入 running 孤儿行 → 新实例 recover 标 interrupted → active-job 返回它
+    await f.app.db.insert(synthesisJobs).values({
+      episodeId: f.episodeId,
+      status: 'running',
+      stage: 'tts',
+      plan: f.lineIds,
+      doneLineIds: [],
+      currentLine: null,
+    })
+    const fresh = await buildApp({ mediaRoot: f.mediaRoot, tts: f.app.tts })
+    try {
+      const res = await fresh.inject({ method: 'GET', url: `/api/episodes/${f.episodeId}/synthesis-job` })
+      assert.equal(res.statusCode, 200)
+      const snap = res.json() as { status: string; error: { code: string } }
+      assert.equal(snap.status, 'interrupted')
+      assert.equal(snap.error.code, 'INTERRUPTED')
+    } finally {
+      await fresh.close()
+    }
+  } finally {
+    await teardown(f)
+  }
+})
+
+test('取消边界：未知任务 404；终态任务 409', async () => {
+  const f = await fixture('取消边界')
+  try {
+    const missing = await f.app.inject({
+      method: 'POST',
+      url: '/api/synthesis-jobs/00000000-0000-4000-8000-00000000000f/cancel',
+    })
+    assert.equal(missing.statusCode, 404)
+
+    const { body } = await synthesize(f)
+    await waitJobStatus(f.app, body.jobId, ['succeeded'])
+    const done = await f.app.inject({ method: 'POST', url: `/api/synthesis-jobs/${body.jobId}/cancel` })
+    assert.equal(done.statusCode, 409)
+    assert.equal((done.json() as { error: { code: string } }).error.code, 'CONFLICT')
+  } finally {
+    await teardown(f)
   }
 })

@@ -27,6 +27,8 @@ export interface SynthesizeLineArgs {
   lineId: string
   /** 强制重新生成（ADR-0006：显式重写，绕过命中） */
   force?: boolean
+  /** 请求级中止（整集取消 / preview 超时共用管道）；中止的请求不落盘 */
+  signal?: AbortSignal
 }
 
 /**
@@ -36,7 +38,7 @@ export interface SynthesizeLineArgs {
 export async function synthesizeLine(
   db: Db,
   deps: SynthesisDeps,
-  { episodeId, lineId, force = false }: SynthesizeLineArgs,
+  { episodeId, lineId, force = false, signal }: SynthesizeLineArgs,
 ): Promise<LineAssetView | null> {
   const [line] = await db
     .select({
@@ -67,11 +69,14 @@ export async function synthesizeLine(
     if (hit) return { id: hit.id, url, durationMs: hit.durationMs }
   }
 
-  const bytes = await deps.tts.synthesize({
-    text: line.text,
-    voice: line.voice,
-    instructions: line.instructions || undefined,
-  })
+  const bytes = await deps.tts.synthesize(
+    {
+      text: line.text,
+      voice: line.voice,
+      instructions: line.instructions || undefined,
+    },
+    signal,
+  )
   await asset.writeAssetFile(deps.mediaRoot, line.wsId, episodeId, lineId, bytes)
   const durationMs = wavDurationMs(bytes)
   const row = await asset.upsertAssetRow(
