@@ -3,6 +3,14 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
 
+/* PROTOTYPE（#33 POC）：streamdown 的样式类都在 dist JS 里，需显式纳管。
+   workspace 布局下 node_modules 在仓库根，故路径比官方文档多一层 ../ */
+@source "../../node_modules/streamdown/dist/*.js";
+@source "../../node_modules/@streamdown/cjk/dist/*.js";
+@source "../../node_modules/@streamdown/code/dist/*.js";
+@source "../../node_modules/@streamdown/math/dist/*.js";
+@source "../../node_modules/@streamdown/mermaid/dist/*.js";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
