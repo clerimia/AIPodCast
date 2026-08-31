@@ -6,7 +6,7 @@
 
 **Architecture:** 新增后端模块 `server/src/modules/resources/`（routes/service/convert/chunk/embed/retrieve 六文件），只依赖 `db/`；writer → resources 单向依赖（`makeWriterTools` 增加 `retrieve` 工具 + Layer 2 第六层追加资源清单）；前端 `web/src/features/resources/` 走 REST 挂在工作间设置页。向量通道由 `RETRIEVAL_MODE=hybrid|bm25` 在检索层开关；摄入永远尽力 embed（失败置 NULL）。
 
-**Tech Stack:** Fastify 5 + @fastify/multipart、drizzle-orm（pg-core `vector`）、ParadeDB pg17（pg_search BM25 + pgvector）、DashScope `text-embedding-v4`（compatible-mode）、`uvx markitdown[pdf]` CLI 子进程、React 19 + TanStack Query。
+**Tech Stack:** Fastify 5 + @fastify/multipart、drizzle-orm（pg-core `vector`）、ParadeDB pg17（pg_search BM25 + pgvector）、DashScope `text-embedding-v4`（compatible-mode）、`uvx markitdown[docx,pdf]` CLI 子进程、React 19 + TanStack Query。
 
 **Spec:** `docs/superpowers/specs/2026-08-31-knowledge-retrieval-design.md`（已批准）。
 
@@ -870,9 +870,10 @@ test('embedChunks：按批切分；失败批次置 null 且计数', async () => 
 
 ```ts
 // DashScope text-embedding-v4（OpenAI 兼容端点）批量 embedding。
-// best-effort 语义（设计定案）：任何失败（缺 key / 非 2xx / 超时 / 形状异常）一律返
-// null 而非抛错——摄入时该批块 embedding 置 NULL（BM25 不受影响），检索时跳过向量通道。
-// 批量上限照 Task 1 spike 2 结论（官方限额 10，留余量取 6）。
+// best-effort 语义（设计定案）：任何失败（缺 key / 非 2xx（含 403 额度用尽）/ 超时 /
+// 形状异常）一律返 null 而非抛错——摄入时该批块 embedding 置 NULL（BM25 不受影响），
+// 检索时跳过向量通道。批量上限：官方限额 10；Task 1 spike 2 时测试账号 403
+// 额度用尽未能实测，留余量保守取 6。
 import { env } from '../../env.js'
 
 export const EMBED_MODEL = 'text-embedding-v4'
@@ -1047,8 +1048,9 @@ test('真 markitdown：docx 夹具转换出文本（无 uv 时跳过）', async 
 
 ```ts
 // 文件 → markdown：.md/.txt 直读；.docx/.pdf 写临时文件后子进程调
-// `uvx --from markitdown[pdf] markitdown <file>`（stdout = markdown，60s 超时，
-// 参数形态照 Task 1 spike 3 结论）。失败 = 400 可读错误；临时文件 finally 清理，
+// `uvx --from markitdown[docx,pdf] markitdown <file>`（stdout = markdown，60s 超时）。
+// spike 3 结论：extras 必须含 docx（裸 [pdf] 拒收 .docx）；Windows 需强制 UTF-8
+// 输出（否则 GBK 乱码）。失败 = 400 可读错误；临时文件 finally 清理，
 // 转换失败零库行残留（落库在转换成功之后，见 service.ts）。
 import { spawn } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -1082,7 +1084,10 @@ export type CliRunner = (file: string, timeoutMs: number) => Promise<string>
 /** 默认 runner：uvx markitdown；非零退出/超时/启动失败 → 400「文件解析失败」 */
 export const runMarkitdown: CliRunner = (file, timeoutMs) =>
   new Promise((resolve, reject) => {
-    const child = spawn('uvx', ['--from', 'markitdown[pdf]', 'markitdown', file], { windowsHide: true })
+    const child = spawn('uvx', ['--from', 'markitdown[docx,pdf]', 'markitdown', file], {
+      windowsHide: true,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+    })
     let stdout = ''
     let stderr = ''
     let timedOut = false
@@ -1278,12 +1283,14 @@ export function formatHits(hits: RetrievalHit[]): string {
 }
 
 async function bm25Channel(db: Db, wsId: string, query: string, limit: number): Promise<RetrievalHit[]> {
+  // pg_search 0.25.4 形状（Task 1 spike 1 验证）：match 走 key_field（id），
+  // score 也按 id 取；旧 `content @@@ '词'` + `paradedb.score('索引名')` 在该版本不可用
   const rows = await db.execute(sql`
     SELECT c.id, c.heading, c.content, r.title AS resource_title,
-           paradedb.score('resource_chunks_bm25') AS score
+           paradedb.score(c.id) AS score
     FROM resource_chunks c
     JOIN resources r ON r.id = c.resource_id
-    WHERE r.ws_id = ${wsId} AND c.content @@@ ${query}
+    WHERE r.ws_id = ${wsId} AND c.id @@@ paradedb.match('content', ${query})
     ORDER BY score DESC
     LIMIT ${limit}`)
   return rows.map((r) => ({
@@ -3071,7 +3078,7 @@ git commit -m "feat(web): 工作间设置资源卡片——上传/粘贴/替换/
   尽力 embed（失败置 NULL）——切换开关零重摄入成本。
 - embedding = DashScope text-embedding-v4（1024 维，compatible-mode），best-effort：
   失败不阻断摄入，BM25 通道兜底。
-- 文件摄入统一经 `uvx markitdown[pdf]` 转 markdown 再切块——格式适配外包给成熟
+- 文件摄入统一经 `uvx markitdown[docx,pdf]` 转 markdown 再切块——格式适配外包给成熟
   工具，仓库零 Python 依赖（运行期前置要求 = 本机装 uv）。
 
 ## 后果
