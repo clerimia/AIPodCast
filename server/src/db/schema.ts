@@ -13,6 +13,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  vector,
 } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 
@@ -123,6 +124,45 @@ export const changeSetOps = pgTable('change_set_ops', {
   payload: jsonb().notNull().default({}),
 })
 
+// ---- 资源层：工作间知识库（知识摄入与检索设计 2026-08-31）----
+
+// 资源：工作间级可检索资料；content_md（markitdown 转换产物）是切块与替换的唯一真相源
+export const resources = pgTable('resources', {
+  id: uuid().primaryKey().defaultRandom(),
+  wsId: uuid('ws_id')
+    .notNull()
+    .references(() => workspaces.id, { onDelete: 'cascade' }),
+  title: text().notNull(),
+  // md | txt | docx | pdf | paste
+  kind: text().notNull(),
+  contentMd: text('content_md').notNull(),
+  // sha256(content_md)：同工作间重复摄入提示用
+  contentHash: text('content_hash').notNull(),
+  charCount: integer('char_count').notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+})
+
+// 资源切块（检索单位）：标题路径 + 块文本 + 可空向量。
+// embedding 失败/离线置 NULL——BM25 通道不受影响（检索层开关与摄入层解耦，设计定案）
+export const resourceChunks = pgTable(
+  'resource_chunks',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    resourceId: uuid('resource_id')
+      .notNull()
+      .references(() => resources.id, { onDelete: 'cascade' }),
+    seq: integer().notNull(),
+    // 标题路径（「第一章 > 1.1 背景」）；无标题文档为空串
+    heading: text().notNull().default(''),
+    content: text().notNull(),
+    // 1024 = text-embedding-v4 维度；不建 ANN 索引（小语料精确余弦 <=>）
+    embedding: vector({ dimensions: 1024 }),
+    createdAt: createdAt(),
+  },
+  (t) => [index('resource_chunks_resource_seq_idx').on(t.resourceId, t.seq)],
+)
+
 // ---- 音频层：素材 / 后期规则 / 会话 / 产物 ----
 
 // 音频素材：每脚本行 0..1 份（UNIQUE，跟随脚本行，ADR-0006）；audio_ref 相对 MEDIA_ROOT
@@ -225,6 +265,7 @@ export const artifacts = pgTable('artifacts', {
 export const workspacesRelations = relations(workspaces, ({ many }) => ({
   speakers: many(speakers),
   episodes: many(episodes),
+  resources: many(resources),
 }))
 
 export const showMetadataRelations = relations(showMetadata, ({ one }) => ({
@@ -274,4 +315,13 @@ export const conversationsRelations = relations(conversations, ({ one }) => ({
 
 export const artifactsRelations = relations(artifacts, ({ one }) => ({
   episode: one(episodes, { fields: [artifacts.episodeId], references: [episodes.id] }),
+}))
+
+export const resourcesRelations = relations(resources, ({ one, many }) => ({
+  workspace: one(workspaces, { fields: [resources.wsId], references: [workspaces.id] }),
+  chunks: many(resourceChunks),
+}))
+
+export const resourceChunksRelations = relations(resourceChunks, ({ one }) => ({
+  resource: one(resources, { fields: [resourceChunks.resourceId], references: [resources.id] }),
 }))

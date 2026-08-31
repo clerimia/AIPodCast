@@ -38,6 +38,14 @@ function agentDirEnv(): string {
   return isAbsolute(raw) ? resolve(raw) : join(repoRoot, raw)
 }
 
+// 检索形态：hybrid = BM25 + 向量；bm25 = 纯全文（向量通道整体不走）。只影响检索层
+function retrievalModeEnv(): 'hybrid' | 'bm25' {
+  const raw = process.env.RETRIEVAL_MODE
+  if (raw === undefined || raw === '') return 'hybrid'
+  if (raw === 'hybrid' || raw === 'bm25') return raw
+  throw new Error(`env RETRIEVAL_MODE must be hybrid or bm25, got: ${raw}`)
+}
+
 export const env = {
   port: intEnv('PORT', 3000),
   // 缺省即 docker-compose.yml 的 Postgres 17 凭据
@@ -51,4 +59,6 @@ export const env = {
   dashscopeApiKey: process.env.DASHSCOPE_API_KEY ?? null,
   dashscopeBaseUrl: process.env.DASHSCOPE_BASE_URL ?? null,
   writerModel: process.env.WRITER_MODEL ?? 'qwen3.7-plus',
+  // 检索形态（向量通道开关）；摄入永远尽力 embed，切换此开关零重摄入成本
+  retrievalMode: retrievalModeEnv(),
 } as const
