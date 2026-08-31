@@ -404,10 +404,13 @@ test('retrieve 工具：形状、执行与跨工作间隔离', async () => {
     assert.deepEqual(tools.map((t) => t.name), ['read', 'add', 'edit', 'retrieve'])
 
     const retrieveTool = tools[3]!
-    const out = (await retrieveTool.execute('call-1', { query: '火锅' }, {})) as {
+    // SDK 的 ToolDefinition.execute 完整签名为 (toolCallId, params, signal, onUpdate, ctx)，
+    // 前三个为运行时必传参数；retrieve 闭包只用到 toolCallId 与 params。测试仅验证返回形状，
+    // 直接以断言所需的最小参数调用（额外参数忽略），与发送阶段的实际调用一致。
+    const out = (await retrieveTool.execute('call-1', { query: '火锅' }, undefined, undefined, undefined as never) as unknown as {
       content: { type: string; text: string }[]
       details: { summary: string; lineIds: string[] }
-    }
+    })
     const text = out.content[0]!.text
     assert.ok(text.includes('《火锅指南》'), text)
     assert.ok(text.includes('涮羊肉'))
@@ -418,9 +421,9 @@ test('retrieve 工具：形状、执行与跨工作间隔离', async () => {
     await app.inject({ method: 'POST', url: `/api/workspaces/${ws2.id}/episodes`, payload: { title: '空集' } })
     const [ep2] = await app.db.select({ id: episodes.id }).from(episodes).where(eq(episodes.wsId, ws2.id))
     const tools2 = makeWriterTools(app.db, ep2!.id, { embedder: deterministicEmbedder })
-    const out2 = (await tools2[3]!.execute('call-2', { query: 'x' }, {})) as {
+    const out2 = (await tools2[3]!.execute('call-2', { query: 'x' }, undefined, undefined, undefined as never) as unknown as {
       content: { text: string }[]
-    }
+    })
     assert.ok(out2.content[0]!.text.includes('还没有资源'))
   } finally {
     await cleanup(app.db, created)

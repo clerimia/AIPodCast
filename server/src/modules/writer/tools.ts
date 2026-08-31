@@ -20,6 +20,8 @@ import { isUuid } from '../../shared/validate.js'
 import type { ScriptOp } from '../script/apply-ops.js'
 import * as scriptService from '../script/service.js'
 import { briefText } from './text.js'
+import { formatHits, retrieve } from '../resources/retrieve.js'
+import type { Embedder } from '../resources/embed.js'
 
 /** customTools 边界类型：SDK 侧 details 是 unknown（renderResult 逆变），具体类型只在工具内部推断 */
 export type WriterTool = ToolDefinition<any, any, any>
@@ -97,7 +99,7 @@ export function buildAddOps(
   }))
 }
 
-export function makeWriterTools(db: Db, episodeId: string): WriterTool[] {
+export function makeWriterTools(db: Db, episodeId: string, opts: { embedder?: Embedder } = {}): WriterTool[] {
   const readTool = defineTool({
     name: 'read',
     label: '读脚本',
@@ -327,5 +329,31 @@ export function makeWriterTools(db: Db, episodeId: string): WriterTool[] {
     },
   })
 
-  return [readTool, addTool, editTool]
+  const retrieveTool = defineTool({
+    name: 'retrieve',
+    label: '检索资源',
+    description:
+      '检索本工作间的资源（知识库）。涉及事实、数据、背景、引用时先检索，用带出处的检索结果写稿。',
+    parameters: Type.Object({
+      query: Type.String({ description: '检索关键词或问题' }),
+    }),
+    execute: async (_toolCallId, params) => {
+      const [ep] = await db.select({ wsId: episodes.wsId }).from(episodes).where(eq(episodes.id, episodeId))
+      if (!ep) throw new AppError('NOT_FOUND', 'episode not found', 404)
+      const result = await retrieve(db, ep.wsId, params.query, { embedder: opts.embedder })
+      const text =
+        result.status === 'empty_library'
+          ? '本工作间还没有资源。请提示用户到「工作间设置 → 资源」上传资料后再检索。'
+          : result.status === 'no_hits'
+            ? `没有检索到与「${params.query}」相关的内容。`
+            : formatHits(result.hits)
+      return {
+        content: [{ type: 'text', text }],
+        // lineIds 恒空：检索是只读路径，不触发脚本刷新
+        details: { summary: `检索资源：${briefText(params.query, 30)}`, lineIds: [] },
+      }
+    },
+  })
+
+  return [readTool, addTool, editTool, retrieveTool]
 }

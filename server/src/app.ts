@@ -63,7 +63,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await app.register(multipart, { limits: { fileSize: MAX_FILE_BYTES } })
 
   // 写稿运行时（Map<episodeId, AgentSession>）；进程退出统一 dispose（ADR-0005/配方 §3.3）
-  const writer = new WriterRuntime(db)
+  const writer = new WriterRuntime(db, { embedder })
   app.decorate('writer', writer)
 
   // 合成任务编排（M5）：synthesis_jobs 落库 + 进程内 async 循环；启动收场 = 孤儿任务标

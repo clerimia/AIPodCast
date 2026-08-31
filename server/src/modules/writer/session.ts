@@ -18,6 +18,7 @@ import type { Db } from '../../db/client.js'
 import { conversations } from '../../db/schema.js'
 import { env } from '../../env.js'
 import { AppError } from '../../shared/errors.js'
+import type { Embedder } from '../resources/embed.js'
 import { makeWriterResourceLoader } from './context.js'
 import { makeWriterTools } from './tools.js'
 
@@ -55,7 +56,7 @@ export class WriterRuntime {
     settingsManager: SettingsManager
   } | null = null
 
-  constructor(private readonly db: Db) {}
+  constructor(private readonly db: Db, private readonly opts: { embedder?: Embedder } = {}) {}
 
   /** 共享单例（modelRuntime/settingsManager 建一次）；DashScope 凭证缺失时在此报错 */
   private async ensureShared() {
@@ -135,7 +136,7 @@ export class WriterRuntime {
         agentDir: env.agentDir,
       }),
       noTools: 'builtin',
-      customTools: makeWriterTools(this.db, episodeId),
+      customTools: makeWriterTools(this.db, episodeId, this.opts),
       sessionManager,
     })
 

@@ -51,4 +51,5 @@ test('静态种子（Layer 3）不含第六层标题——动态内容只在 bef
   const seed = writerStaticPrompt()
   assert.ok(!seed.includes('## 节目信息与说话人'))
   assert.ok(seed.includes('read / add / edit'))
+  assert.ok(seed.includes('retrieve'))
 })
