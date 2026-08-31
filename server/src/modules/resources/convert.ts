@@ -3,6 +3,8 @@
 // spike 3 结论：extras 必须含 docx（裸 [pdf] 拒收 .docx）；Windows 需强制 UTF-8
 // 输出（否则 GBK 乱码）。失败 = 400 可读错误；临时文件 finally 清理，
 // 转换失败零库行残留（落库在转换成功之后，见 service.ts）。
+// 子进程登记进模块级 Set，进程退出时统一 kill（Windows 上父进程死亡不自动杀子进程，
+// app.onClose 调 killRunningMarkitdown，同 ffmpeg.ts 模式）。
 import { spawn } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -32,6 +34,16 @@ export function kindFromFilename(filename: string): 'md' | 'txt' | 'docx' | 'pdf
 
 export type CliRunner = (file: string, timeoutMs: number) => Promise<string>
 
+const running = new Set<ReturnType<typeof spawn>>()
+
+/** 进程退出时清理在途 markitdown（app.onClose 调，同 ffmpeg.ts 的 killRunningFfmpeg） */
+export function killRunningMarkitdown(): void {
+  for (const child of running) {
+    child.kill()
+  }
+  running.clear()
+}
+
 /** 默认 runner：uvx markitdown；非零退出/超时/启动失败 → 400「文件解析失败」 */
 export const runMarkitdown: CliRunner = (file, timeoutMs) =>
   new Promise((resolve, reject) => {
@@ -39,22 +51,30 @@ export const runMarkitdown: CliRunner = (file, timeoutMs) =>
       windowsHide: true,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
     })
+    running.add(child)
+    // 流式按 utf8 解码：跨 chunk 边界的多字节字符不会被解成 U+FFFD（stdout 就是中文 markdown）
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
     let stdout = ''
     let stderr = ''
     let timedOut = false
+    let settled = false
     const timer = setTimeout(() => {
       timedOut = true
       child.kill()
     }, timeoutMs)
     const fail = (message: string) => {
+      if (settled) return
+      settled = true
       clearTimeout(timer)
+      running.delete(child)
       reject(new AppError('BAD_REQUEST', message, 400))
     }
-    child.stdout.on('data', (c: Buffer) => {
-      stdout += c.toString()
+    child.stdout.on('data', (c: string) => {
+      stdout += c
     })
-    child.stderr.on('data', (c: Buffer) => {
-      stderr += c.toString()
+    child.stderr.on('data', (c: string) => {
+      stderr += c
     })
     child.on('error', (err) => fail(`文件解析失败：markitdown 启动失败（本机需安装 uv 并在 PATH）：${err.message}`))
     child.on('close', (code) => {
@@ -66,7 +86,10 @@ export const runMarkitdown: CliRunner = (file, timeoutMs) =>
         fail(`文件解析失败：markitdown 退出码 ${code}：${stderr.trim().split('\n').slice(-3).join(' ').slice(0, 500)}`)
         return
       }
+      if (settled) return
+      settled = true
       clearTimeout(timer)
+      running.delete(child)
       resolve(stdout)
     })
   })

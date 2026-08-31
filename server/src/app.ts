@@ -4,6 +4,7 @@ import { createDb, type Db } from './db/client.js'
 import { healthRoutes } from './modules/health/routes.js'
 import { runPostPipeline } from './modules/post/pipeline.js'
 import { killRunningFfmpeg } from './modules/post/ffmpeg.js'
+import { killRunningMarkitdown } from './modules/resources/convert.js'
 import { scriptRoutes } from './modules/script/routes.js'
 import { SynthesisJobManager } from './modules/synthesis/jobs.js'
 import { synthesisJobRoutes, synthesisRoutes } from './modules/synthesis/routes.js'
@@ -59,6 +60,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   await jobs.recover()
   app.addHook('onClose', async () => {
     killRunningFfmpeg()
+    killRunningMarkitdown()
     await writer.dispose()
     await db.$client.end({ timeout: 1 })
   })

@@ -13,6 +13,8 @@ test('kindFromFilename：白名单命中与拒绝', () => {
   assert.equal(kindFromFilename('paper.pdf'), 'pdf')
   assert.equal(kindFromFilename('a.html'), null)
   assert.equal(kindFromFilename('noext'), null)
+  assert.equal(kindFromFilename('a.tar.md'), 'md')
+  assert.equal(kindFromFilename('file.'), null)
 })
 
 test('md/txt 直读（不进子进程）', async () => {
@@ -47,6 +49,20 @@ test('docx/pdf 走注入的 CLI：临时文件用完即清；空产物 → 400',
     () => convertToMarkdown(Buffer.from('x'), 'a.pdf', { runCli: async () => '   ' }),
     (err: unknown) => err instanceof AppError && err.message.includes('转换结果为空'),
   )
+
+  // CLI 失败路径：错误原样上抛，临时目录同样清理
+  let seenFile2 = ''
+  await assert.rejects(
+    () =>
+      convertToMarkdown(Buffer.from('x'), '报告.docx', {
+        runCli: async (file) => {
+          seenFile2 = file
+          throw new AppError('BAD_REQUEST', '文件解析失败：boom', 400)
+        },
+      }),
+    (err: unknown) => err instanceof AppError && err.message.includes('文件解析失败：boom'),
+  )
+  await assert.rejects(() => access(seenFile2)) // 失败后临时目录也已清理
 })
 
 test('真 markitdown：docx 夹具转换出文本（无 uv 时跳过）', async (t) => {
