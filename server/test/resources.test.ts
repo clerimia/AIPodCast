@@ -130,3 +130,167 @@ test('删除：204 且级联删块；再来一次 404', async () => {
     await app.close()
   }
 })
+
+test('粘贴摄入校验：缺 title / 空 text / 超长 text / 空内容 → 400', async () => {
+  const app = await buildApp({ embedder: deterministicEmbedder })
+  const created: string[] = []
+  try {
+    const ws = await fixtureWorkspace(app, created, '校验工作间')
+    const bad = [
+      { text: '有内容没标题' },
+      { title: '有标题', text: '   ' },
+      { title: '超长', text: '甲'.repeat(200_001) },
+      { title: '纯标题空白文档', text: '  \n  ' },
+    ]
+    for (const payload of bad) {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/workspaces/${ws.id}/resources`,
+        payload,
+      })
+      assert.equal(res.statusCode, 400, JSON.stringify(payload).slice(0, 60))
+      assert.equal((res.json() as { error: { code: string } }).error.code, 'BAD_REQUEST')
+    }
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+  }
+})
+
+test('重复摄入：同内容第二次命中 duplicateTitle（不阻断）', async () => {
+  const app = await buildApp({ embedder: deterministicEmbedder })
+  const created: string[] = []
+  try {
+    const ws = await fixtureWorkspace(app, created, '重复工作间')
+    const body = { title: '第一份', text: '# 重复内容\n同一段资料。' }
+    await app.inject({ method: 'POST', url: `/api/workspaces/${ws.id}/resources`, payload: body })
+    const second = await app.inject({
+      method: 'POST',
+      url: `/api/workspaces/${ws.id}/resources`,
+      payload: { ...body, title: '第二份' },
+    })
+    assert.equal(second.statusCode, 201)
+    assert.equal((second.json() as IngestResponse).duplicateTitle, '第一份')
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+  }
+})
+
+test('embedding 全失败 → 201 + embedWarning + 向量覆盖 0（检索仍可走全文）', async () => {
+  const failing: Embedder = { async embed() { return null } }
+  const app = await buildApp({ embedder: failing })
+  const created: string[] = []
+  try {
+    const ws = await fixtureWorkspace(app, created, '降级工作间')
+    const made = await app.inject({
+      method: 'POST',
+      url: `/api/workspaces/${ws.id}/resources`,
+      payload: { title: '无向量', text: '一段没有向量的资料。' },
+    })
+    assert.equal(made.statusCode, 201)
+    const body = made.json() as IngestResponse
+    assert.ok(body.embedWarning)
+    assert.ok(body.embedWarning!.includes('未生成向量'))
+    const list = await app.inject({ method: 'GET', url: `/api/workspaces/${ws.id}/resources` })
+    const row = (list.json() as { embeddedCount: number; chunkCount: number }[])[0]!
+    assert.equal(row.embeddedCount, 0)
+    assert.equal(row.chunkCount, body.chunkCount)
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+  }
+})
+
+test('multipart 上传 .md：201、标题取文件名（去扩展名）；非法扩展名 400', async () => {
+  const app = await buildApp({ embedder: deterministicEmbedder })
+  const created: string[] = []
+  try {
+    const ws = await fixtureWorkspace(app, created, '上传工作间')
+    const boundary = '----aipodcast-test-boundary'
+    const content = '# 上传的笔记\n\n这里是正文，提到播客后期。'
+    const multipartBody = (filename: string, fileContent: string) =>
+      [
+        `--${boundary}`,
+        `Content-Disposition: form-data; name="file"; filename="${filename}"`,
+        'Content-Type: application/octet-stream',
+        '',
+        fileContent,
+        `--${boundary}--`,
+        '',
+      ].join('\r\n')
+
+    const ok = await app.inject({
+      method: 'POST',
+      url: `/api/workspaces/${ws.id}/resources`,
+      headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: multipartBody('我的笔记.md', content),
+    })
+    assert.equal(ok.statusCode, 201)
+    const body = ok.json() as IngestResponse
+    assert.equal(body.resource.title, '我的笔记')
+    assert.equal(body.resource.kind, 'md')
+
+    const bad = await app.inject({
+      method: 'POST',
+      url: `/api/workspaces/${ws.id}/resources`,
+      headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: multipartBody('page.html', '<p>x</p>'),
+    })
+    assert.equal(bad.statusCode, 400)
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+  }
+})
+
+test('替换：内容与块整体换新（旧块不残留）；空内容替换 → 400 且旧资源原样', async () => {
+  const app = await buildApp({ embedder: deterministicEmbedder })
+  const created: string[] = []
+  try {
+    const ws = await fixtureWorkspace(app, created, '替换工作间')
+    const made = await app.inject({
+      method: 'POST',
+      url: `/api/workspaces/${ws.id}/resources`,
+      payload: { title: '旧版', text: '旧内容。' },
+    })
+    const { resource, chunkCount: oldChunks } = made.json() as IngestResponse
+
+    const replaced = await app.inject({
+      method: 'POST',
+      url: `/api/workspaces/${ws.id}/resources/${resource.id}/replace`,
+      payload: { title: '新版', text: '# 新\n新内容第一段。\n\n新内容第二段。' },
+    })
+    assert.equal(replaced.statusCode, 200)
+    const body = replaced.json() as IngestResponse
+    assert.equal(body.resource.title, '新版')
+    assert.ok(body.resource.charCount !== resource.charCount)
+
+    const detail = await app.inject({ method: 'GET', url: `/api/workspaces/${ws.id}/resources/${resource.id}` })
+    const d = detail.json() as { contentMd: string; chunkCount: number }
+    assert.equal(d.contentMd, '# 新\n新内容第一段。\n\n新内容第二段。')
+    assert.notEqual(d.chunkCount, 0)
+
+    // 失败路径：空内容不进事务，旧资源原样
+    const failed = await app.inject({
+      method: 'POST',
+      url: `/api/workspaces/${ws.id}/resources/${resource.id}/replace`,
+      payload: { text: '   ' },
+    })
+    assert.equal(failed.statusCode, 400)
+    const after = await app.inject({ method: 'GET', url: `/api/workspaces/${ws.id}/resources/${resource.id}` })
+    assert.equal((after.json() as { contentMd: string }).contentMd, '# 新\n新内容第一段。\n\n新内容第二段。')
+
+    // 未知资源 404
+    const missing = await app.inject({
+      method: 'POST',
+      url: `/api/workspaces/${ws.id}/resources/00000000-0000-4000-8000-000000000000/replace`,
+      payload: { text: 'x' },
+    })
+    assert.equal(missing.statusCode, 404)
+    void oldChunks
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+  }
+})
