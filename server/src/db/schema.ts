@@ -144,7 +144,8 @@ export const resources = pgTable('resources', {
 })
 
 // 资源切块（检索单位）：标题路径 + 块文本 + 可空向量。
-// embedding 失败/离线置 NULL——BM25 通道不受影响（检索层开关与摄入层解耦，设计定案）
+// embedding 失败/离线置 NULL——BM25 通道不受影响（检索层开关与摄入层解耦，设计定案）。
+// BM25 索引（resource_chunks_bm25）为手写，见迁移 0003——drizzle 不管理，重新生成迁移别删它
 export const resourceChunks = pgTable(
   'resource_chunks',
   {
