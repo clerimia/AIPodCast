@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { inArray } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { buildApp } from '../src/app.js'
-import { workspaces } from '../src/db/schema.js'
+import { episodes, workspaces } from '../src/db/schema.js'
 import type { Embedder } from '../src/modules/resources/embed.js'
+import { retrieve } from '../src/modules/resources/retrieve.js'
 
 type App = Awaited<ReturnType<typeof buildApp>>
 type Db = App['db']
@@ -289,6 +290,138 @@ test('替换：内容与块整体换新（旧块不残留）；空内容替换 �
     })
     assert.equal(missing.statusCode, 404)
     void oldChunks
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+  }
+})
+
+/** 夹具：一个工作间摄入两份资料（量子主题 + 火锅主题），返回 wsId */
+async function fixtureLibrary(app: App, created: string[], name: string) {
+  const ws = await fixtureWorkspace(app, created, name)
+  await app.inject({
+    method: 'POST',
+    url: `/api/workspaces/${ws.id}/resources`,
+    payload: { title: '量子手册', text: '# 量子\n\n量子计算的纠错码是当前工程难点。' },
+  })
+  await app.inject({
+    method: 'POST',
+    url: `/api/workspaces/${ws.id}/resources`,
+    payload: { title: '火锅指南', text: '# 火锅\n\n老北京涮羊肉讲究清汤锅底。' },
+  })
+  return ws
+}
+
+test('检索：空库短路 → empty_library；净查询空白 → no_hits', async () => {
+  const app = await buildApp({ embedder: deterministicEmbedder })
+  const created: string[] = []
+  try {
+    const ws = await fixtureWorkspace(app, created, '空库工作间')
+    const empty = await retrieve(app.db, ws.id, '随便查', { embedder: deterministicEmbedder })
+    assert.equal(empty.status, 'empty_library')
+
+    const lib = await fixtureLibrary(app, created, '空白查询库')
+    const blank = await retrieve(app.db, lib.id, '!!!', { embedder: deterministicEmbedder })
+    assert.equal(blank.status, 'no_hits')
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+  }
+})
+
+test('检索：纯 BM25 模式命中中文词；embedder 绝不被调用', async () => {
+  const app = await buildApp({ embedder: deterministicEmbedder })
+  const created: string[] = []
+  try {
+    const ws = await fixtureLibrary(app, created, 'BM25 工作间')
+    const poisoned: Embedder = {
+      async embed() {
+        throw new Error('bm25 模式不应调用 embedder')
+      },
+    }
+    const result = await retrieve(app.db, ws.id, '火锅', { mode: 'bm25', embedder: poisoned })
+    assert.equal(result.status, 'ok')
+    assert.ok(result.hits[0]!.content.includes('涮羊肉'))
+    assert.equal(result.hits[0]!.resourceTitle, '火锅指南')
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+  }
+})
+
+test('检索：向量通道（hybrid）——与词面无重叠也能召回语义块', async () => {
+  const app = await buildApp({ embedder: deterministicEmbedder })
+  const created: string[] = []
+  try {
+    const ws = await fixtureLibrary(app, created, '向量工作间')
+    // stub 语义：查询含「量子」→ 第 0 维，与量子块的嵌入同向（余弦距离 0）
+    const result = await retrieve(app.db, ws.id, '量子', { mode: 'hybrid', embedder: deterministicEmbedder })
+    assert.equal(result.status, 'ok')
+    assert.ok(result.hits[0]!.content.includes('量子计算'))
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+  }
+})
+
+test('检索：工作间隔离——A 库的资料在 B 库查不到', async () => {
+  const app = await buildApp({ embedder: deterministicEmbedder })
+  const created: string[] = []
+  try {
+    await fixtureLibrary(app, created, 'A 工作间')
+    const wsB = await fixtureWorkspace(app, created, 'B 工作间')
+    await app.inject({
+      method: 'POST',
+      url: `/api/workspaces/${wsB.id}/resources`,
+      payload: { title: 'B 的资料', text: '与量子毫不相干的内容。' },
+    })
+    const result = await retrieve(app.db, wsB.id, '量子', { mode: 'hybrid', embedder: deterministicEmbedder })
+    // B 库唯一块与查询向量不同向（第 1 维），BM25 亦无词面命中 → 不得串出 A 的块
+    assert.ok(!result.hits.some((h) => h.resourceTitle === '量子手册'))
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+  }
+})
+
+test('retrieve 工具：形状、执行与跨工作间隔离', async () => {
+  const { makeWriterTools } = await import('../src/modules/writer/tools.js')
+  const app = await buildApp({ embedder: deterministicEmbedder })
+  const created: string[] = []
+  try {
+    const ws = await fixtureLibrary(app, created, '工具工作间')
+    const ep = (
+      (
+        await app.inject({
+          method: 'POST',
+          url: `/api/workspaces/${ws.id}/episodes`,
+          payload: { title: '检索测试集' },
+        })
+      ).json() as { id: string }
+    )
+
+    const tools = makeWriterTools(app.db, ep.id, { embedder: deterministicEmbedder })
+    assert.deepEqual(tools.map((t) => t.name), ['read', 'add', 'edit', 'retrieve'])
+
+    const retrieveTool = tools[3]!
+    const out = (await retrieveTool.execute('call-1', { query: '火锅' }, {})) as {
+      content: { type: string; text: string }[]
+      details: { summary: string; lineIds: string[] }
+    }
+    const text = out.content[0]!.text
+    assert.ok(text.includes('《火锅指南》'), text)
+    assert.ok(text.includes('涮羊肉'))
+    assert.deepEqual(out.details.lineIds, [])
+
+    // 空库引导语
+    const ws2 = await fixtureWorkspace(app, created, '空工具工作间')
+    await app.inject({ method: 'POST', url: `/api/workspaces/${ws2.id}/episodes`, payload: { title: '空集' } })
+    const [ep2] = await app.db.select({ id: episodes.id }).from(episodes).where(eq(episodes.wsId, ws2.id))
+    const tools2 = makeWriterTools(app.db, ep2!.id, { embedder: deterministicEmbedder })
+    const out2 = (await tools2[3]!.execute('call-2', { query: 'x' }, {})) as {
+      content: { text: string }[]
+    }
+    assert.ok(out2.content[0]!.text.includes('还没有资源'))
   } finally {
     await cleanup(app.db, created)
     await app.close()
