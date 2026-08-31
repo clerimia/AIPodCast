@@ -1,10 +1,13 @@
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify'
+import multipart from '@fastify/multipart'
 import { artifactsRoutes } from './modules/artifacts/routes.js'
 import { createDb, type Db } from './db/client.js'
 import { healthRoutes } from './modules/health/routes.js'
 import { runPostPipeline } from './modules/post/pipeline.js'
 import { killRunningFfmpeg } from './modules/post/ffmpeg.js'
-import { killRunningMarkitdown } from './modules/resources/convert.js'
+import { killRunningMarkitdown, MAX_FILE_BYTES } from './modules/resources/convert.js'
+import { makeDashscopeEmbedder, type Embedder } from './modules/resources/embed.js'
+import { resourceRoutes } from './modules/resources/routes.js'
 import { scriptRoutes } from './modules/script/routes.js'
 import { SynthesisJobManager } from './modules/synthesis/jobs.js'
 import { synthesisJobRoutes, synthesisRoutes } from './modules/synthesis/routes.js'
@@ -22,6 +25,7 @@ declare module 'fastify' {
     jobs: SynthesisJobManager
     mediaRoot: string
     tts: TtsClient
+    embedder: Embedder
   }
 }
 
@@ -32,6 +36,8 @@ export interface BuildAppOptions {
   mediaRoot?: string
   /** 覆盖 TTS 客户端（测试注入 stub 用） */
   tts?: TtsClient
+  /** 覆盖 embedding 客户端（测试注入 stub 用；缺省现造，读 DashScope 凭证） */
+  embedder?: Embedder
 }
 
 // Fastify 组装：插件、路由注册、统一错误形状（M4 起在此加 media 静态服务）
@@ -48,6 +54,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
   const tts = opts.tts ?? makeDashscopeTts()
   app.decorate('mediaRoot', mediaRoot)
   app.decorate('tts', tts)
+
+  // Embedder（资源摄入与检索用）；测试可注 stub
+  const embedder = opts.embedder ?? makeDashscopeEmbedder()
+  app.decorate('embedder', embedder)
+
+  // multipart（资源上传）：单文件上限同 convert.ts 的 MAX_FILE_BYTES（单一真相源）
+  await app.register(multipart, { limits: { fileSize: MAX_FILE_BYTES } })
 
   // 写稿运行时（Map<episodeId, AgentSession>）；进程退出统一 dispose（ADR-0005/配方 §3.3）
   const writer = new WriterRuntime(db)
@@ -96,6 +109,7 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<FastifyInsta
 
   await app.register(healthRoutes, { prefix: '/api' })
   await app.register(workspaceRoutes, { prefix: '/api/workspaces' })
+  await app.register(resourceRoutes, { prefix: '/api/workspaces' })
   await app.register(scriptRoutes, { prefix: '/api/episodes' })
   await app.register(synthesisRoutes, { prefix: '/api/episodes' })
   await app.register(synthesisJobRoutes, { prefix: '/api/synthesis-jobs' })

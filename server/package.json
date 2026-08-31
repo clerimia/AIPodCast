@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.4",
+    "@fastify/multipart": "^10.1.1",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.12.1",
