@@ -29,3 +29,6 @@ data/
 
 # Agent 工具本地目录
 .workbuddy/
+
+# git worktrees（superpowers 隔离工作区）
+.worktrees/
