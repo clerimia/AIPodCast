@@ -10,6 +10,9 @@
     "db:generate": "drizzle-kit generate",
     "test": "tsx --test --test-concurrency=1 test/*.test.ts",
     "spike": "tsx scripts/spike-pi-embed.ts",
+    "spike-bm25": "tsx scripts/spike-bm25.ts",
+    "spike-embedding": "tsx scripts/spike-embedding.ts",
+    "spike-markitdown": "tsx scripts/spike-markitdown.ts",
     "spike-tts": "tsx scripts/spike-tts.ts"
   },
   "engines": {
