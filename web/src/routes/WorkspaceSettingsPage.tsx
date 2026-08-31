@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { ShowMetadataForm } from '@/features/workspace-settings/ShowMetadataForm'
 import { SpeakerList } from '@/features/workspace-settings/SpeakerList'
+import { ResourceList } from '@/features/resources/ResourceList'
 import { useWorkspace } from '@/hooks/useWorkspace'
 import { ApiError, apiErrorMessage } from '@/lib/api/http'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -65,6 +66,7 @@ export default function WorkspaceSettingsPage() {
         <div className="mt-6 space-y-4">
           <ShowMetadataForm wsId={wsId} metadata={workspace.data.showMetadata} />
           <SpeakerList wsId={wsId} speakers={workspace.data.speakers} />
+          <ResourceList wsId={wsId} />
         </div>
       )}
     </div>
