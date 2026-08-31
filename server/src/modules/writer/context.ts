@@ -9,6 +9,7 @@ import { DefaultResourceLoader } from '@earendil-works/pi-coding-agent'
 import type { SettingsManager } from '@earendil-works/pi-coding-agent'
 import type { Db } from '../../db/client.js'
 import { episodes, showMetadata, speakers } from '../../db/schema.js'
+import { listResourceTitles } from '../resources/service.js'
 
 // ---- Layer 3：前五层静态种子（建会话算一次；第六层动态内容绝不写在这里） ----
 
@@ -51,6 +52,8 @@ export interface ShowContext {
   intro: string
   /** id 必须带：add/edit 工具按 uuid 引用说话人（模型从第六层取 id） */
   speakers: { id: string; name: string; persona: string; gender: string }[]
+  /** 资源清单（标题 + 字符数）：模型不检索也知道库里有什么，避免盲检 */
+  resources: { title: string; charCount: number }[]
 }
 
 /** 第六层文本（纯函数，可单测）：固定槽位「## 节目信息与说话人」，拼在 system prompt 末尾 */
@@ -72,6 +75,14 @@ export function formatShowContext(ctx: ShowContext): string {
   } else {
     // 冷启动死角：没有可用说话人时 add 必然失败，提前告知模型该做什么而不是盲试
     lines.push('（工作间还没有可用说话人——无法新增台词，请提示用户先在工作间创建说话人）')
+  }
+  if (ctx.resources.length > 0) {
+    lines.push('工作间资源（细节用 retrieve 工具检索）：')
+    for (const r of ctx.resources) {
+      lines.push(`- 《${r.title}》（${r.charCount} 字）`)
+    }
+  } else {
+    lines.push('（本工作间还没有资源；需要事实资料时提示用户到「工作间设置 → 资源」上传）')
   }
   return lines.join('\n')
 }
@@ -100,6 +111,7 @@ export async function loadShowContext(db: Db, episodeId: string): Promise<ShowCo
     bannedWords: meta?.bannedWords ?? '',
     intro: meta?.intro ?? '',
     speakers: speakerRows,
+    resources: await listResourceTitles(db, ep.wsId),
   }
 }
 
