@@ -17,6 +17,22 @@ interface RequestOptions {
   signal?: AbortSignal
 }
 
+/** 非 2xx → 解析统一错误形状并抛 ApiError（upload 与 request 共用） */
+async function throwApiError(res: Response): Promise<never> {
+  let code = String(res.status)
+  let message = res.statusText
+  try {
+    const payload = (await res.json()) as { error?: { code?: string; message?: string } }
+    if (payload.error) {
+      code = payload.error.code ?? code
+      message = payload.error.message ?? message
+    }
+  } catch {
+    // 错误体不是 JSON，保持默认
+  }
+  throw new ApiError(code, message, res.status)
+}
+
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const res = await fetch(`/api${path}`, {
     method: opts.method ?? 'GET',
@@ -26,18 +42,7 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   })
 
   if (!res.ok) {
-    let code = String(res.status)
-    let message = res.statusText
-    try {
-      const payload = (await res.json()) as { error?: { code?: string; message?: string } }
-      if (payload.error) {
-        code = payload.error.code ?? code
-        message = payload.error.message ?? message
-      }
-    } catch {
-      // 错误体不是 JSON，保持默认
-    }
-    throw new ApiError(code, message, res.status)
+    await throwApiError(res)
   }
 
   if (res.status === 204) return undefined as T
@@ -53,6 +58,12 @@ export const http = {
   patch: <T>(path: string, body?: unknown, signal?: AbortSignal) =>
     request<T>(path, { method: 'PATCH', body, signal }),
   delete: <T>(path: string, signal?: AbortSignal) => request<T>(path, { method: 'DELETE', signal }),
+  /** multipart 上传：浏览器生成 boundary，不能手设 Content-Type */
+  upload: async <T>(path: string, formData: FormData, signal?: AbortSignal): Promise<T> => {
+    const res = await fetch(`/api${path}`, { method: 'POST', body: formData, signal })
+    if (!res.ok) await throwApiError(res)
+    return (await res.json()) as T
+  },
 }
 
 /** toast/错误页统一文案来源 */

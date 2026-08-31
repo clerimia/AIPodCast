@@ -235,3 +235,26 @@ export type WriterSseEvent =
   | { event: 'turn:end'; data: Record<string, never> }
   | { event: 'done'; data: Record<string, never> }
   | { event: 'error'; data: { message: string } }
+
+// ---- 资源（工作间知识库）----
+export type ResourceKind = 'md' | 'txt' | 'docx' | 'pdf' | 'paste'
+
+export interface ResourceSummary {
+  id: string
+  title: string
+  kind: ResourceKind
+  charCount: number
+  chunkCount: number
+  embeddedCount: number
+  createdAt: string
+}
+
+/** POST /resources 与 POST /resources/:rid/replace 的响应 */
+export interface IngestResourceResponse {
+  resource: ResourceSummary
+  chunkCount: number
+  /** embedding 部分失败提示；全成功为 null */
+  embedWarning: string | null
+  /** 同工作间同内容已有资源的标题；无重复为 null */
+  duplicateTitle: string | null
+}
