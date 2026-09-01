@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict'
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { eq, inArray } from 'drizzle-orm'
 import { buildApp } from '../src/app.js'
 import {
+  artifacts,
   conversations,
   episodes,
   postRules,
@@ -363,6 +367,145 @@ test('建单集 → 201，连带 conversations(kind=writer) 与 post_rules 默�
       payload: { title: '' },
     })
     assert.equal(bad.statusCode, 400)
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+  }
+})
+
+// ---- 删单集：硬删 + 级联 + media 清理 + 隔离 ----
+
+test('DELETE 单集：204 + DB 外键级联（script_lines/conversations/post_rules）+ media 目录清空', async () => {
+  // 隔离 MEDIA_ROOT 到临时目录；buildApp 读 env.mediaRoot 缺省
+  const mediaRoot = await mkdtemp(join(tmpdir(), 'aipodcast-test-media-'))
+  const app = await buildApp({ mediaRoot })
+  const created: string[] = []
+  try {
+    const ws = await fixtureWorkspace(app, created, '硬删工作间')
+    // 建说话人 + 单集 → 加脚本行（确认级联能带走 script_lines）
+    const sp = (
+      await app.inject({
+        method: 'POST',
+        url: `/api/workspaces/${ws.id}/speakers`,
+        payload: { name: '甲', voice: 'Cherry' },
+      })
+    ).json() as { id: string }
+    const ep = (
+      await app.inject({
+        method: 'POST',
+        url: `/api/workspaces/${ws.id}/episodes`,
+        payload: { title: '待删' },
+      })
+    ).json() as { id: string }
+    await app.inject({
+      method: 'POST',
+      url: `/api/episodes/${ep.id}/changes`,
+      payload: { ops: [{ op: 'add', afterLineId: null, speakerId: sp.id, text: '一句台词' }] },
+    })
+    // 预置 media 目录里放点文件，看删时是否被带走
+    const epDir = join(mediaRoot, `ws-${ws.id}`, `ep-${ep.id}`)
+    const assetsDir = join(epDir, 'assets')
+    const artifactsDir = join(epDir, 'artifacts')
+    await mkdir(assetsDir, { recursive: true })
+    await mkdir(artifactsDir, { recursive: true })
+    await writeFile(join(assetsDir, 'fake.wav'), 'fake-audio-bytes')
+    await writeFile(join(artifactsDir, 'master.mp3'), 'fake-master-bytes')
+
+    // 触发删除
+    const del = await app.inject({
+      method: 'DELETE',
+      url: `/api/workspaces/${ws.id}/episodes/${ep.id}`,
+    })
+    assert.equal(del.statusCode, 204)
+    // 再请求一次 404（已删）
+    const again = await app.inject({
+      method: 'DELETE',
+      url: `/api/workspaces/${ws.id}/episodes/${ep.id}`,
+    })
+    assert.equal(again.statusCode, 404)
+
+    // DB 级联断言：episodes 行无；conversations/post_rules/script_lines 跟着没
+    const epRows = await app.db.select().from(episodes).where(eq(episodes.id, ep.id))
+    assert.equal(epRows.length, 0)
+    const convRows = await app.db.select().from(conversations).where(eq(conversations.episodeId, ep.id))
+    assert.equal(convRows.length, 0)
+    const prRows = await app.db.select().from(postRules).where(eq(postRules.episodeId, ep.id))
+    assert.equal(prRows.length, 0)
+    const slRows = await app.db.select().from(scriptLines).where(eq(scriptLines.episodeId, ep.id))
+    assert.equal(slRows.length, 0)
+
+    // media 目录清理：ep-{id} 整个目录已被 rm -rf
+    await assert.rejects(() => stat(epDir), /ENOENT/)
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+    await rm(mediaRoot, { recursive: true, force: true })
+  }
+})
+
+test('DELETE 单集：跨工作间隔离——A 库的 epId 在 B 库请求 → 404，且 A 库未被删', async () => {
+  const app = await buildApp()
+  const created: string[] = []
+  try {
+    const wsA = await fixtureWorkspace(app, created, 'A 工作间')
+    const wsB = await fixtureWorkspace(app, created, 'B 工作间')
+    const epA = (
+      await app.inject({
+        method: 'POST',
+        url: `/api/workspaces/${wsA.id}/episodes`,
+        payload: { title: 'A 的单集' },
+      })
+    ).json() as { id: string }
+
+    // 用 B 的 wsId + A 的 epId 试删
+    const cross = await app.inject({
+      method: 'DELETE',
+      url: `/api/workspaces/${wsB.id}/episodes/${epA.id}`,
+    })
+    assert.equal(cross.statusCode, 404)
+
+    // A 库的单集还在
+    const still = await app.db.select().from(episodes).where(eq(episodes.id, epA.id))
+    assert.equal(still.length, 1)
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+  }
+})
+
+test('LIST 单集：hasArtifact 正确反映产物存在；无产物 = false', async () => {
+  const app = await buildApp()
+  const created: string[] = []
+  try {
+    const ws = await fixtureWorkspace(app, created, 'hasArtifact 工作间')
+    const epNoArt = (
+      await app.inject({
+        method: 'POST',
+        url: `/api/workspaces/${ws.id}/episodes`,
+        payload: { title: '无产物' },
+      })
+    ).json() as { id: string }
+    const epWithArt = (
+      await app.inject({
+        method: 'POST',
+        url: `/api/workspaces/${ws.id}/episodes`,
+        payload: { title: '有产物' },
+      })
+    ).json() as { id: string }
+    // 手动插一条 artifacts 行（不跑完整合成）
+    await app.db.insert(artifacts).values({
+      episodeId: epWithArt.id,
+      kind: 'master',
+      audioRef: 'fake/ref.mp3',
+    })
+
+    const list = await app.inject({ method: 'GET', url: `/api/workspaces/${ws.id}/episodes` })
+    assert.equal(list.statusCode, 200)
+    const rows = list.json() as { id: string; hasArtifact: boolean }[]
+    const a = rows.find((r) => r.id === epNoArt.id)
+    const b = rows.find((r) => r.id === epWithArt.id)
+    assert.equal(a?.hasArtifact, false)
+    assert.equal(b?.hasArtifact, true)
   } finally {
     await cleanup(app.db, created)
     await app.close()

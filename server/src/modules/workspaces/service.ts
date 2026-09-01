@@ -1,9 +1,12 @@
 // 工作间配置服务（#19 表 1）：工作间 / 节目元数据 / 说话人 / 单集 CRUD。
 // 职责边界（docs/modules-and-phasing.md）：不碰脚本 / 音频 / 会话；
 // 建单集只连带 conversations(kind=writer) + post_rules 默认行。
-import { and, asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, sql } from 'drizzle-orm'
+import { rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { Db } from '../../db/client.js'
 import {
+  artifacts,
   conversations,
   episodes,
   postRules,
@@ -243,4 +246,94 @@ export async function createEpisode(db: Db, wsId: string, input: { title: string
     await tx.insert(postRules).values({ episodeId: ep!.id })
     return ep
   })
+}
+
+/**
+ * 硬删单集。事务内：删 episode 行（外键级联带走 script_lines / audio_assets /
+ * change_sets/change_set_ops / conversations / post_rules / synthesis_jobs /
+ * artifacts / messages 等所有附属）。事务提交后：rm `MEDIA_ROOT/ws-{wsId}/ep-{id}`
+ * 整个目录（assets + artifacts 落盘文件）。
+ *
+ * 失败语义：
+ *   - 'not_found'  工作间或单集不存在
+ *   - 'has_artifact' 已有产物（master.mp3）— 仍删，但路由层返 409 让前端用更重的 UI 二次确认
+ *   - 'deleted'   成功；目录清理失败不抛（孤儿文件不影响正确性，DB 已删）
+ *
+ * 媒体目录清理是 best-effort：rm 失败仅记入服务端日志，不影响 API 返回。uuid 永不
+ * 复用（drizzle .defaultRandom() + FK 残留保护），孤儿目录不会撞到未来同名 episode。
+ */
+export type DeleteEpisodeResult = 'not_found' | 'has_artifact' | 'deleted'
+
+export async function deleteEpisode(
+  db: Db,
+  mediaRoot: string,
+  wsId: string,
+  episodeId: string,
+): Promise<DeleteEpisodeResult> {
+  const result = await db.transaction(async (tx) => {
+    const [ep] = await tx
+      .select({ id: episodes.id })
+      .from(episodes)
+      .where(and(eq(episodes.id, episodeId), eq(episodes.wsId, wsId)))
+    if (!ep) return 'not_found' as const
+
+    // 提前探一下有没有产物（artifacts 行）；有则先标，删完再返回让路由决定
+    const [art] = await tx
+      .select({ id: artifacts.id })
+      .from(artifacts)
+      .where(eq(artifacts.episodeId, episodeId))
+      .limit(1)
+
+    await tx.delete(episodes).where(eq(episodes.id, episodeId))
+    return art ? ('has_artifact' as const) : ('deleted' as const)
+  })
+
+  if (result === 'not_found') return result
+
+  // 事务提交后再清目录；失败不抛（orphan file 留底，DB 不会再有引用）
+  const epDir = join(mediaRoot, `ws-${wsId}`, `ep-${episodeId}`)
+  try {
+    await rm(epDir, { recursive: true, force: true })
+  } catch {
+    // 吞掉：单集已从 DB 删干净；落盘文件孤儿不影响功能（uuid 不复用）
+  }
+  return result
+}
+
+/** 列单集时同时统计「是否有产物」——前端删除按钮需要警示 */
+export interface EpisodeWithArtifact {
+  id: string
+  wsId: string
+  title: string
+  showNotes: string
+  createdAt: Date
+  hasArtifact: boolean
+}
+
+export async function listEpisodesWithArtifact(db: Db, wsId: string): Promise<EpisodeWithArtifact[] | null> {
+  if (!(await workspaceExists(db, wsId))) return null
+  // 一次查询拿齐 has_artifact：EXISTS 子查询（drizzle 的 sql 模板参数内插风格与同模块
+  // listResources 一致；参数化天然免注入）。
+  const rows = await db.execute(sql`
+    SELECT e.id, e.ws_id, e.title, e.show_notes, e.created_at,
+           EXISTS(SELECT 1 FROM artifacts a WHERE a.episode_id = e.id) AS has_artifact
+    FROM episodes e
+    WHERE e.ws_id = ${wsId}
+    ORDER BY e.created_at DESC
+  `)
+  return (rows as unknown as Array<{
+    id: string
+    ws_id: string
+    title: string
+    show_notes: string
+    created_at: Date
+    has_artifact: boolean
+  }>).map((r) => ({
+    id: String(r.id),
+    wsId: String(r.ws_id),
+    title: String(r.title),
+    showNotes: String(r.show_notes),
+    createdAt: r.created_at as Date,
+    hasArtifact: Boolean(r.has_artifact),
+  }))
 }

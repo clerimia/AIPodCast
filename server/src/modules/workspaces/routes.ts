@@ -11,6 +11,11 @@ interface WsParams {
   wsId: string
 }
 
+interface EpisodeParams {
+  wsId: string
+  eid: string
+}
+
 interface SpeakerParams {
   wsId: string
   speakerId: string
@@ -114,7 +119,7 @@ export async function workspaceRoutes(app: FastifyInstance) {
 
   app.get<{ Params: WsParams }>('/:wsId/episodes', async (req) => {
     const wsId = requireUuidParam(req.params.wsId, 'workspace')
-    const rows = await service.listEpisodes(app.db, wsId)
+    const rows = await service.listEpisodesWithArtifact(app.db, wsId)
     if (rows === null) throw new AppError('NOT_FOUND', 'workspace not found', 404)
     return rows
   })
@@ -126,5 +131,15 @@ export async function workspaceRoutes(app: FastifyInstance) {
     const ep = await service.createEpisode(app.db, wsId, { title: requireString(body, 'title') })
     if (!ep) throw new AppError('NOT_FOUND', 'workspace not found', 404)
     return reply.status(201).send(ep)
+  })
+
+  // 硬删单集：DB 外键级联删所有附属行 + media 下 ep-{id} 目录。仍返回 204 让前端
+  // 直接走成功路径——「有产物」是前端 UI 警示（按钮文案），不是后端阻挡。
+  app.delete<{ Params: EpisodeParams }>('/:wsId/episodes/:eid', async (req, reply) => {
+    const wsId = requireUuidParam(req.params.wsId, 'workspace')
+    const eid = requireUuidParam(req.params.eid, 'episode')
+    const result = await service.deleteEpisode(app.db, app.mediaRoot, wsId, eid)
+    if (result === 'not_found') throw new AppError('NOT_FOUND', 'episode not found', 404)
+    return reply.status(204).send()
   })
 }

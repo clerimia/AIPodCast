@@ -1,11 +1,18 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router'
-import { ArrowLeft, ArrowRight, ListVideo, Plus, Settings } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ListVideo, Loader2, MoreHorizontal, Plus, Settings, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { CommandPalette, usePaletteHotkey, type Command } from '@/components/command-palette'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
 import { ThemeToggle } from '@/components/theme-toggle'
@@ -101,12 +108,15 @@ function EpisodeSection({
   pending,
 }: {
   wsId: string
-  episodes?: { id: string; title: string; showNotes: string; createdAt: string }[]
+  episodes?: { id: string; title: string; showNotes: string; createdAt: string; hasArtifact: boolean }[]
   pending: boolean
 }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [title, setTitle] = useState('')
+  // 二次确认：要求用户输入「删除」字样才能点确定；防止误触
+  const [deleting, setDeleting] = useState<{ id: string; title: string; hasArtifact: boolean } | null>(null)
+  const [confirmText, setConfirmText] = useState('')
 
   // 建单集后直接进入编辑页（与原首页卡片行为一致）
   const createEpisode = useMutation({
@@ -117,6 +127,18 @@ function EpisodeSection({
       navigate(`/workspaces/${wsId}/episodes/${ep.id}`)
     },
     onError: (e) => toast.error(`建单集失败：${apiErrorMessage(e)}`),
+  })
+
+  // 硬删单集。后端总是 204；前端 cancel 清理 confirm 文本
+  const removeEpisode = useMutation({
+    mutationFn: (eid: string) => workspaceApi.deleteEpisode(wsId, eid),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.episodes(wsId) })
+      toast.success('单集已删除')
+      setDeleting(null)
+      setConfirmText('')
+    },
+    onError: (e) => toast.error(`删除失败：${apiErrorMessage(e)}`),
   })
 
   const submit = (e: FormEvent) => {
@@ -164,20 +186,95 @@ function EpisodeSection({
 
       <ul className="space-y-1">
         {episodes?.map((ep) => (
-          <li key={ep.id}>
-            <Link
-              to={`/workspaces/${wsId}/episodes/${ep.id}`}
-              className="group flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-all hover:border-brand-border hover:bg-brand-soft"
-            >
+          <li key={ep.id} className="group relative flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-all hover:border-brand-border hover:bg-brand-soft">
+            <Link to={`/workspaces/${wsId}/episodes/${ep.id}`} className="flex min-w-0 flex-1 items-center gap-3">
               <span className="min-w-0 flex-1 truncate font-medium">{ep.title}</span>
+              {ep.hasArtifact && <Badge variant="secondary">有产物</Badge>}
               <span className="shrink-0 text-xs text-muted-foreground">
                 {new Date(ep.createdAt).toLocaleDateString()}
               </span>
               <ArrowRight className="size-3.5 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
             </Link>
+            {/* 行尾操作：单个 DropdownMenu 不挤排版；只放删除（删除不可逆） */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`单集《${ep.title}》操作`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <MoreHorizontal />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  variant="destructive"
+                  onSelect={() => {
+                    setDeleting({ id: ep.id, title: ep.title, hasArtifact: ep.hasArtifact })
+                    setConfirmText('')
+                  }}
+                >
+                  <Trash2 /> 删除单集
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </li>
         ))}
       </ul>
+
+      {/* 硬删二次确认：需手动输入「删除」字样才能点确定（防误触）；有产物时再额外提醒 */}
+      <Dialog
+        open={deleting !== null}
+        onOpenChange={(v) => {
+          if (!v) {
+            setDeleting(null)
+            setConfirmText('')
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>删除单集《{deleting?.title}》</DialogTitle>
+            <DialogDescription>
+              {deleting?.hasArtifact
+                ? '⚠️ 该单集已有产物（master.mp3 / 行级文稿 / 单集简介），一并删除。脚本、素材与会话历史也会清空。'
+                : '脚本、素材与会话历史会全部清空，不可恢复。'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <label htmlFor="episode-delete-confirm" className="text-sm font-medium">
+              输入「<span className="text-destructive">删除</span>」以确认
+            </label>
+            <Input
+              id="episode-delete-confirm"
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              placeholder="删除"
+              autoComplete="off"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleting(null)
+                setConfirmText('')
+              }}
+            >
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={confirmText !== '删除' || removeEpisode.isPending}
+              onClick={() => deleting && removeEpisode.mutate(deleting.id)}
+            >
+              {removeEpisode.isPending ? <Loader2 className="animate-spin" /> : <Trash2 />}
+              {removeEpisode.isPending ? '删除中…' : '确认删除'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   )
 }

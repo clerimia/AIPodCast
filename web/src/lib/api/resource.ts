@@ -21,6 +21,10 @@ export const resourceApi = {
     return http.upload<IngestResourceResponse>(`/workspaces/${wsId}/resources/${resourceId}/replace`, fd)
   },
 
+  /** 粘贴文本替换资源（与 paste 走同一管道；事务内删旧块 + 写新块） */
+  replaceWithText: (wsId: string, resourceId: string, body: { title?: string; text: string }) =>
+    http.post<IngestResourceResponse>(`/workspaces/${wsId}/resources/${resourceId}/replace`, body),
+
   remove: (wsId: string, resourceId: string) =>
     http.delete<void>(`/workspaces/${wsId}/resources/${resourceId}`),
 

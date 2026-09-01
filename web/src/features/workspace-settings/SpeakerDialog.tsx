@@ -19,12 +19,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Segmented, type SegmentedOption } from '@/components/ui/segmented'
 import { Textarea } from '@/components/ui/textarea'
 import { apiErrorMessage } from '@/lib/api/http'
 import { qk } from '@/lib/api/keys'
 import { workspaceApi } from '@/lib/api/workspace'
 import { VOICES } from '@/lib/voices'
 import type { Speaker } from '@/lib/api/types'
+
+type Gender = '' | '男' | '女'
+const GENDER_OPTIONS: SegmentedOption<Gender>[] = [
+  { value: '男', label: '男' },
+  { value: '女', label: '女' },
+]
 
 interface SpeakerDialogProps {
   wsId: string
@@ -65,7 +72,10 @@ function SpeakerForm({
   const queryClient = useQueryClient()
   const [name, setName] = useState(speaker?.name ?? '')
   const [persona, setPersona] = useState(speaker?.persona ?? '')
-  const [gender, setGender] = useState(speaker?.gender ?? '')
+  // 旧版本是自由文本；保留历史值的兜底（不是「男/女」之一就当作未填，避免下拉框里出现脏值）
+  const [gender, setGender] = useState<Gender>(
+    speaker?.gender === '男' || speaker?.gender === '女' ? speaker.gender : '',
+  )
   const [voice, setVoice] = useState(speaker?.voice ?? VOICES[0]!.name)
 
   const save = useMutation({
@@ -111,12 +121,13 @@ function SpeakerForm({
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <Label htmlFor="speaker-gender">性别</Label>
-            <Input
-              id="speaker-gender"
+            <Label>性别</Label>
+            <Segmented<Gender>
+              ariaLabel="性别"
               value={gender}
-              onChange={(e) => setGender(e.target.value)}
-              placeholder="男 / 女…"
+              onChange={setGender}
+              options={GENDER_OPTIONS}
+              className="w-full [&>button]:flex-1"
             />
           </div>
           <div className="space-y-1.5">
@@ -125,7 +136,8 @@ function SpeakerForm({
               <SelectTrigger id="speaker-voice" className="w-full">
                 <SelectValue placeholder="选择音色" />
               </SelectTrigger>
-              <SelectContent>
+              {/* popper + 显式 max-h：24 个音色单行能见 9 个左右，超出可滚，不再溢出视口 */}
+              <SelectContent position="popper" className="max-h-72">
                 {VOICES.map((v) => (
                   <SelectItem key={v.name} value={v.name}>
                     {v.name} · {v.label}

@@ -69,6 +69,8 @@ export interface Episode {
   title: string
   showNotes: string
   createdAt: string
+  /** 是否有产物（master.mp3）——工作间列表带警示用。删除单集按钮据此显示额外警告 */
+  hasArtifact: boolean
 }
 
 /** GET /episodes/:id —— 单集详情（M2：artifact 恒 null，M5 起为产物摘要） */

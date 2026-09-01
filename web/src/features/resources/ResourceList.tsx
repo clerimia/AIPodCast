@@ -1,11 +1,17 @@
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { FileText, Loader2, Sparkles, Upload } from 'lucide-react'
+import { FileText, FileUp, Loader2, Sparkles, Trash2, Type, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { EmptyState } from '@/components/ui/empty-state'
 import { apiErrorMessage } from '@/lib/api/http'
 import { qk } from '@/lib/api/keys'
@@ -35,6 +41,8 @@ export function ResourceList({ wsId }: { wsId: string }) {
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const [deleting, setDeleting] = useState<ResourceSummary | null>(null)
   const [pasteOpen, setPasteOpen] = useState(false)
+  // 替换 → 粘贴：单独 dialog，复用 PasteDialog 组件
+  const [replacePaste, setReplacePaste] = useState<ResourceSummary | null>(null)
 
   const { data: resources = [], isPending } = useQuery({
     queryKey: qk.resources(wsId),
@@ -174,24 +182,36 @@ export function ResourceList({ wsId }: { wsId: string }) {
                   )}
                   {embed.isPending && embed.variables === r.id ? '向量化中…' : '向量化'}
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => {
-                    setReplacing(r)
-                    replaceInput.current?.click()
-                  }}
-                >
-                  替换
-                </Button>
+                {/* 替换入口：两个等价路径——上传文件 / 粘贴文本——放进同一菜单，避免顶栏多塞按钮 */}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="sm" disabled={busy} aria-label={`替换资源《${r.title}》`}>
+                      替换
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        setReplacing(r)
+                        replaceInput.current?.click()
+                      }}
+                    >
+                      <FileUp /> 上传文件
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => setReplacePaste(r)}>
+                      <Type /> 粘贴文本
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Button
                   variant="ghost"
                   size="sm"
                   className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                   disabled={remove.isPending}
                   onClick={() => setDeleting(r)}
+                  aria-label={`删除资源《${r.title}》`}
                 >
+                  <Trash2 />
                   删除
                 </Button>
               </div>
@@ -260,7 +280,13 @@ export function ResourceList({ wsId }: { wsId: string }) {
         </DialogContent>
       </Dialog>
 
-      <PasteDialog wsId={wsId} open={pasteOpen} onOpenChange={setPasteOpen} />
+      <PasteDialog wsId={wsId} open={pasteOpen} onOpenChange={setPasteOpen} mode={{ kind: 'create' }} />
+      <PasteDialog
+        wsId={wsId}
+        open={replacePaste !== null}
+        onOpenChange={(v) => !v && setReplacePaste(null)}
+        mode={replacePaste ? { kind: 'replace', resourceId: replacePaste.id, initialTitle: replacePaste.title } : { kind: 'create' }}
+      />
     </Card>
   )
 }

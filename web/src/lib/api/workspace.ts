@@ -38,4 +38,11 @@ export const workspaceApi = {
   /** 建单集：后端连带 conversations(kind=writer) + post_rules 默认行 */
   createEpisode: (wsId: string, body: { title: string }) =>
     http.post<Episode>(`/workspaces/${wsId}/episodes`, body),
+
+  /**
+   * 硬删单集：DB 外键级联删所有附属行 + media 下 ep-{id} 目录。
+   * 后端总是 204；前端需在按钮上警示「有产物」并要求输入「删除」字样二次确认。
+   */
+  deleteEpisode: (wsId: string, episodeId: string) =>
+    http.delete<void>(`/workspaces/${wsId}/episodes/${episodeId}`),
 }
