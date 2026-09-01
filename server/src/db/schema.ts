@@ -144,7 +144,10 @@ export const resources = pgTable('resources', {
 })
 
 // 资源切块（检索单位）：标题路径 + 块文本 + 可空向量。
-// embedding 失败/离线置 NULL——BM25 通道不受影响（检索层开关与摄入层解耦，设计定案）。
+// embedding 始终由「向量化」端点（POST /resources/:rid/embed）显式写入——摄入路径
+// 不调 embedder，所以新 chunk 一律 embedding=NULL（资源级状态 'pending'）。
+// 用户在前端「向量化」按钮触发；中途失败的块 embedding 保持 NULL（资源级状态 'partial'）。
+// BM25 通道不受 embedding 列影响。
 // BM25 索引（resource_chunks_bm25）为手写，见迁移 0003——drizzle 不管理，重新生成迁移别删它
 export const resourceChunks = pgTable(
   'resource_chunks',

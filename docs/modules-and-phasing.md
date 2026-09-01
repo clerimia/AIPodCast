@@ -60,6 +60,13 @@ server/
         gaps.ts  verify.ts          # 停顿档位表；ffprobe 确定性验证（≤150ms 容差、时间戳单调）
       artifacts/                    # 产物/媒体
         routes.ts  media.ts         # GET artifact；GET /media/* Range 流式
+      resources/                    # 资源摄入与检索（M7，ADR-0011）
+        routes.ts                   # 列表/详情/删除/上传摄入/粘贴摄入/替换/向量化
+        service.ts                  # 摄入/列表/详情/替换/删除/向量化事务编排
+        convert.ts                  # 文件 → markdown：md/txt 直读；docx/pdf 走 uvx markitdown[docx,pdf]
+        chunk.ts                    # markdown 感知切块（标题边界 + 长度上限 + 重叠；纯函数）
+        embed.ts                    # DashScope text-embedding-v4 客户端（best-effort，失败返 null）+ makeNullEmbedder
+        retrieve.ts                 # BM25 + 向量双通道 + RRF 等权融合（纯函数）+ 编排
     shared/
       errors.ts  serial.ts          # 统一错误形状；L001 编解码/重编
 ```
@@ -74,10 +81,11 @@ server/
 | synthesis | preview（同步单行）、synthesize（异步 202）、synthesis-jobs 轮询；逐行取/合成素材 | 不自己跑 ffmpeg（调 post）；不是 AI 会话 |
 | post | 纯流水线：素材文件 + 参数 → master + transcript | 无 DB 访问、无 DashScope——纯函数易测 |
 | artifacts | GET artifact、/media Range 流式 | 不写业务状态 |
+| resources | 资源摄入（multipart 上传 + 文本粘贴）、列表/详情/替换/删除/向量化、检索（BM25 + 向量 + RRF 等权融合） | 不碰脚本/音频/后期；不 import writer/script/synthesis/post/artifacts；只走 db/ 与同模块纯函数 |
 
 ### 关键 wiring 决策
 
-1. **依赖方向单向**：`writer → script`（工具进程内直调服务层函数）；`synthesis → script`（读行）+ `post`（拼 master）+ `tts`；`script` 不依赖任何音频模块（作废素材 = 事务内删 `audio_assets` 行，一个 DB 操作，不调 synthesis）；`artifacts` 只读。
+1. **依赖方向单向**：`writer → script`（工具进程内直调服务层函数）；`writer → resources`（`retrieve` 工具进程内直调 `retrieve.ts` 检索函数，只读路径，「AI 不碰音频」边界不变）；`synthesis → script`（读行）+ `post`（拼 master）+ `tts`；`script` 不依赖任何音频模块（作废素材 = 事务内删 `audio_assets` 行，一个 DB 操作，不调 synthesis）；`artifacts` 只读。`resources` 只依赖 `db/` 与 `shared/`，不碰 writer/script/synthesis/post/artifacts。
 2. **ChangeSet→会话通知的编排放路由层**：`POST /changes` 路由先 `script.service.applyChanges`（事务），成功后再 `writer.session.notifyChangeSet`（会话存在且 idle 时 `sendCustomMessage(triggerTurn:false)`）——script 服务不 import writer，避免环。
 3. **preview 与整集共用 `synthesizeLine`**（ADR-0006）：命中素材直接返回，未命中 TTS 后回填；整集 job 循环调它。
 4. **合成任务落库 `synthesis_jobs`**（#28 重新讨论，替代原「内存 `Map`」定案）：任务创建插行、状态迁移落库，重启时非终态孤儿行标 `interrupted`（终态，不自动续跑——重新合成命中素材复用）；运行期句柄（AbortController/取消旗标）留进程内。**编排形态仍为进程内 async 循环**：TTS fetch + ffmpeg 子进程全是 I/O、无 CPU 密集段，不引入队列/worker 进程/任务库（#28 定案）。#22 的取消/细粒度进度照旧 M6。
@@ -101,6 +109,7 @@ flowchart LR
   M3 --> M5[M5 整集合成·产物]
   M4 --> M5
   M5 --> M6[M6 收尾]
+  M6 --> M7[M7 资源摄入与检索]
 ```
 
 | 期 | 后端 | 前端 | 收尾时能跑通什么 |
@@ -112,6 +121,7 @@ flowchart LR
 | **M4 单行合成·试听** | **先最小调通** tts.ts（请求体 `input{text,voice,language_type,instructions}` → wav 24k mono）；asset 命中/回填；preview 同步端点；/media Range 流式 | audio-workspace 上半：试听按钮 + 播单行 wav、「需重新合成」标记（invalidatedLineIds）、停顿/语速下拉（PATCH 两端点） | 点试听听声音；改台词提交后行标「需重新合成」；停顿/语速落库即时生效 |
 | **M5 整集合成·产物** | post 流水线七步（audio-params.md）；synthesis 异步编排 + `synthesis_jobs` 落库（重启孤儿任务标 `interrupted`；行级 preview 互斥）；synthesize 202 + synthesis-jobs + artifact；产物整包替换（验证失败保留旧产物） | MasterPlayer + useSynthesisJob 轮询（refetchInterval 2s）+ transcript 行级高亮 + 整集合成按钮 + **合成前自动提交**编排（ensureCommitted） | **端到端闭环**：对话写稿→提交改动→试听→整集合成→播 master + 行级高亮。MVP 达成 |
 | **M6 收尾（无新功能）** | 错误路径打磨（preview 失败语义与超时，#19 验证项 3）；#22 决议落地（进度/取消扩展 jobs） | 流式气泡合帧、`<audio>` seek 高亮漂移（#20 验证项）；toast/重试补齐；启动文档 | MVP 打磨完成，交付 |
+| **M7 资源摄入与检索** | **先 spike**：ParadeDB pg_search 中文 BM25（`chinese_compatible` 分词）/ DashScope `text-embedding-v4` 端点形状与限额 / `uvx markitdown[docx,pdf]` CLI 冷启动与编码坑；迁移 0003 加 `vector` + `pg_search` 扩展 + 手写 BM25 索引（drizzle-kit 不管）；`server/src/modules/resources/{routes,service,convert,chunk,embed,retrieve}.ts`（`embed`/`retrieve` 失败 best-effort 返 null）；writer 第四工具 `retrieve`（闭包锁 `wsId`、可选 `mode` 参数 = hybrid/bm25/vector）；Layer 2 第六层追加工作间资源清单 | `web/src/features/resources/` 资源卡片（列表 / 上传 / 粘贴 / 替换 / 删除 / 向量化按钮 + 状态徽标）；`web/src/lib/api/{resource,types}.ts`；挂在 `WorkspaceSettingsPage`；CONTEXT.md 补「块 (Chunk)」术语 + `retrieve` 工具的 mode 描述 | 上传 .md/.txt 直读 / .docx/.pdf 走 markitdown→ 切块 → 入库；点「向量化」补向量；写稿大师可 `retrieve` 按工作间查资料，hybrid/bm25/vector 三通道自由切换；替换事务回滚保旧 |
 
 ## 与 ADR / 边界的对齐
 

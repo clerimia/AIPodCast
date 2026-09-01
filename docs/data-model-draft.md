@@ -30,7 +30,7 @@ script_lines(    id uuid PK, episode_id FK→episodes, serial, speaker_id, text,
                  deleted bool default false, updated_at )    // 活实体；无版本；无 TTS 配置字段
 change_sets(     id, episode_id, base_version, kind, applied_at, summary )
 change_set_ops(  cs_id, seq, op, line_id, payload jsonb )
-// 其余文本层：workspaces、resources + chunks(pgvector)、speakers、show_metadata
+// 其余文本层：workspaces、speakers、show_metadata、resources、resource_chunks（见下）
 
 // ---- 音频层：合成 + 后期 ----
 audio_assets(    id PK, script_line_id FK UNIQUE→script_lines, audio_ref,
@@ -88,6 +88,58 @@ artifacts(       id, episode_id FK UNIQUE→episodes, kind, audio_ref,
 ```
 GET /ep/:id/script → 当前脚本（可编辑）：script_lines（过滤 deleted，按 serial）
 ```
+
+## 资源层（工作间知识库，ADR-0011）
+
+工作间级知识库，让写稿大师 `retrieve` 工具按场景引用资料。`workspaces 1—N resources 1—N resource_chunks`，两条外键均 `ON DELETE CASCADE`（删工作间带删资源与块）。
+
+```
+resources(
+  id uuid PK,
+  ws_id      FK→workspaces ON DELETE CASCADE,    // 工作间级隔离
+  title      text NOT NULL,                      // 展示名（文件名或粘贴时用户填）
+  kind       text NOT NULL,                      // 'md' | 'txt' | 'docx' | 'pdf' | 'paste'
+  content_md text NOT NULL,                      // markitdown 转换产物（切块与替换的唯一真相源）
+  content_hash text NOT NULL,                    // sha256(content_md)：同工作间重复摄入提示
+  char_count integer NOT NULL,
+  created_at, updated_at
+)
+
+resource_chunks(
+  id uuid PK,
+  resource_id  FK→resources ON DELETE CASCADE,   // 删资源级联删块
+  seq          integer NOT NULL,                 // 资源内顺序
+  heading      text NOT NULL default '',         // 标题路径（「第三章 > 3.1 背景」）
+  content      text NOT NULL,
+  embedding    vector(1024),                     // 可空——见「摄入 / 向量化」边界
+  created_at
+)
+```
+
+**索引：**
+- `resource_chunks_resource_seq_idx`：`(resource_id, seq)`（drizzle 自动建）
+- `resource_chunks_bm25`：`USING bm25 (id, content) WITH (key_field='id', text_fields='{"content": {"tokenizer": {"type": "chinese_compatible"}, "record": "freq"}})`（手写，见迁移 0003 末尾）
+- `resource_chunks.embedding` 不建 ANN（小语料精确余弦 `<=>` 即可）
+
+**摄入 / 向量化边界（核心）：**
+
+- **摄入**（`POST /:wsId/resources`、`POST /:wsId/resources/:rid/replace`）：**不调 embedder**——切块即落库，所有 chunk `embedding=NULL`，资源级状态 = `'pending'`。理由：①入库即时返回；②不消耗 DashScope 额度；③UX 干净（无 `embedWarning`）。
+- **向量化**（`POST /:wsId/resources/:rid/embed`）：用户在前端「向量化」按钮显式触发；同步等结果。失败块 `embedding` 保持 NULL，可重试。资源级 `embeddingStatus` 派生（不持久化）：
+  - `pending` — 全部 NULL（刚摄入、用户关通道、或部分失败后再次失败）
+  - `partial` — 部分块有向量
+  - `done` — 全部块有向量
+- **替换**：内容变了旧向量失效，新块 `embedding` 强制 NULL（状态回 `pending`），用户必须重新点「向量化」。
+
+**检索形态**（`RETRIEVAL_MODE` / `retrieve` 工具 `mode` 参数）：
+
+- `hybrid`（缺省）= BM25 + 向量双通道，应用侧 RRF 等权融合（`score = Σ (1/(60+rank) / hits.length)`）取前 5。等权归一：库中 90% 资源没向量时，BM25 20 块的累加会把向量 2 块挤出 top-5；归一后两通道权重对等。
+- `bm25` = 纯全文（专名/编号精确，省额度）。
+- `vector` = 纯语义（近义改写召回）。
+- 任一通道失败自动降级（向量失败 → 纯 BM25；库内全无 embedding → 纯 BM25）。
+- BM25 查询形状：`id @@@ paradedb.match('content', $query)` + `paradedb.score(id)`（pg_search 0.25.4 绑定，升级时重跑 `server/scripts/spike-bm25.ts`）。
+
+**不持久化 `embeddingStatus`**：用户主动「关通道」时状态自然回到 `pending`（与刚摄入视觉一致）；切换 `RETRIEVAL_MODE` 不重摄入——开关在检索层。
+
 
 ## 已定边界
 

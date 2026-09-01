@@ -14,6 +14,7 @@
 | ffmpeg / ffprobe | 8.x | PATH 可寻；后期流水线逐行调用 |
 | Docker | 任意 | 只装 Postgres 17（ParadeDB 发行版），见 `docker-compose.yml` |
 | DashScope 凭证 | — | 写稿与 TTS 用；仅 `DASHSCOPE_API_KEY`/`DASHSCOPE_BASE_URL` |
+| uv / uvx | ≥ 0.11 | 仅上传 `.docx` / `.pdf` 时需要（`uvx --from 'markitdown[docx,pdf]' markitdown`）；`.md` / `.txt` / 粘贴文本不依赖 |
 
 ## 启动
 
@@ -39,6 +40,14 @@ npm run dev          # 两端同时跑（concurrently）
 
 浏览器打开 http://localhost:5173 。媒体文件（素材/产物）落 `MEDIA_ROOT`（默认 `<repo>/media`）。
 
+## 环境变量
+
+完整列表见 `server/.env.example`（复制为 `server/.env`）。与资源检索相关的：
+
+| 变量 | 缺省 | 说明 |
+|---|---|---|
+| `RETRIEVAL_MODE` | `hybrid` | 检索形态：`hybrid` = BM25 + 向量双通道 RRF 等权融合；`bm25` = 纯全文（专名/编号精确）；`vector` = 纯语义（近义召回）。**只在检索层生效**——摄入不调 embedder，新资源状态 `pending`，用户在设置页「向量化」按钮触发向量化（`POST /workspaces/:id/resources/:rid/embed`）。切换此开关零重摄入成本。 |
+
 ## 测试与检查
 
 ```bash
@@ -53,7 +62,7 @@ npm run lint -w web  # oxlint
 ## 目录速览
 
 ```
-server/src/modules/   workspaces / script / synthesis（tts·jobs）/ post（pipeline）/ writer（PI SDK 会话）/ artifacts
-web/src/              lib/api（契约类型与端点封装）· features（writer-chat / audio-workspace / script-panel）· stores
-docs/                 api-and-dataflow · frontend-structure · synthesis-progress-and-cancel · adr/ · research/
+server/src/modules/   workspaces / script / synthesis（tts·jobs）/ post（pipeline）/ writer（PI SDK 会话）/ artifacts / resources（convert·chunk·embed·retrieve·service·routes）
+web/src/              lib/api（契约类型与端点封装）· features（writer-chat / audio-workspace / script-panel / resources）· stores
+docs/                 api-and-dataflow · frontend-structure · synthesis-progress-and-cancel · adr/ · research/ · superpowers（specs·plans）
 ```
