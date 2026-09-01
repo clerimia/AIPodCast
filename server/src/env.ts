@@ -38,12 +38,13 @@ function agentDirEnv(): string {
   return isAbsolute(raw) ? resolve(raw) : join(repoRoot, raw)
 }
 
-// 检索形态：hybrid = BM25 + 向量；bm25 = 纯全文（向量通道整体不走）。只影响检索层
-function retrievalModeEnv(): 'hybrid' | 'bm25' {
+// 检索形态：hybrid = BM25 + 向量；bm25 = 纯全文（向量通道整体不走）；vector = 纯语义。
+// 只影响检索层；摄入永远尽力 embed，切换此开关零重摄入成本
+function retrievalModeEnv(): 'hybrid' | 'bm25' | 'vector' {
   const raw = process.env.RETRIEVAL_MODE
   if (raw === undefined || raw === '') return 'hybrid'
-  if (raw === 'hybrid' || raw === 'bm25') return raw
-  throw new Error(`env RETRIEVAL_MODE must be hybrid or bm25, got: ${raw}`)
+  if (raw === 'hybrid' || raw === 'bm25' || raw === 'vector') return raw
+  throw new Error(`env RETRIEVAL_MODE must be hybrid, bm25, or vector, got: ${raw}`)
 }
 
 export const env = {

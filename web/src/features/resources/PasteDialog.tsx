@@ -21,9 +21,8 @@ export function PasteDialog({ wsId, open, onOpenChange }: { wsId: string; open: 
     mutationFn: () => resourceApi.paste(wsId, { title: title.trim(), text }),
     onSuccess: (body) => {
       void queryClient.invalidateQueries({ queryKey: qk.resources(wsId) })
-      if (body.embedWarning) toast.warning(body.embedWarning)
       if (body.duplicateTitle) toast.info(`注意：工作间已有同内容资源《${body.duplicateTitle}》`)
-      toast.success('资源已入库')
+      toast.success('资源已入库（未向量化，在列表点「向量化」）')
       setTitle('')
       setText('')
       onOpenChange(false)

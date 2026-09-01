@@ -103,4 +103,13 @@ export async function resourceRoutes(app: FastifyInstance) {
     if (!deleted) throw new AppError('NOT_FOUND', 'resource not found', 404)
     return reply.status(204).send()
   })
+
+  // 显式向量化：用户在前端"向量化"按钮触发。同步等结果：toast 成功 / 部分失败 / 全失败。
+  app.post<{ Params: ResourceParams }>('/:wsId/resources/:rid/embed', async (req) => {
+    const wsId = requireUuidParam(req.params.wsId, 'workspace')
+    const rid = requireUuidParam(req.params.rid, 'resource')
+    const result = await service.embedResource(app.db, wsId, rid, { embedder: app.embedder })
+    if (result === 'not_found') throw new AppError('NOT_FOUND', 'resource not found', 404)
+    return result
+  })
 }

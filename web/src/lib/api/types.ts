@@ -246,6 +246,11 @@ export interface ResourceSummary {
   charCount: number
   chunkCount: number
   embeddedCount: number
+  /** 资源级向量状态：'pending' = 全部 NULL（刚摄入或用户关了向量通道）；
+   *                'partial' = 部分块有向量（嵌入中途失败遗留）；
+   *                'done'    = 全部块都有向量。'closed' 不持久化——用户关后
+   *                状态回到 'pending'。 */
+  embeddingStatus: 'pending' | 'partial' | 'done'
   createdAt: string
 }
 
@@ -253,8 +258,15 @@ export interface ResourceSummary {
 export interface IngestResourceResponse {
   resource: ResourceSummary
   chunkCount: number
-  /** embedding 部分失败提示；全成功为 null */
-  embedWarning: string | null
+  /** 摄入路径解耦 embed：ingest 永远 'pending'。向量由用户在前端点"向量化"触发。 */
+  embeddingStatus: 'pending'
   /** 同工作间同内容已有资源的标题；无重复为 null */
   duplicateTitle: string | null
+}
+
+/** POST /resources/:rid/embed 端点的响应 */
+export interface EmbedResourceResponse {
+  status: 'pending' | 'partial' | 'done'
+  failedCount: number
+  chunkCount: number
 }

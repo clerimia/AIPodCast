@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { FileText, Upload } from 'lucide-react'
+import { FileText, Loader2, Sparkles, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -23,8 +23,7 @@ const kindLabel: Record<ResourceSummary['kind'], string> = {
   paste: '粘贴',
 }
 
-function reportIngest(body: { embedWarning: string | null; duplicateTitle: string | null }) {
-  if (body.embedWarning) toast.warning(body.embedWarning)
+function reportIngest(body: { duplicateTitle: string | null }) {
   if (body.duplicateTitle) toast.info(`注意：工作间已有同内容资源《${body.duplicateTitle}》`)
 }
 
@@ -47,7 +46,7 @@ export function ResourceList({ wsId }: { wsId: string }) {
     onSuccess: (body) => {
       void queryClient.invalidateQueries({ queryKey: qk.resources(wsId) })
       reportIngest(body)
-      toast.success(`《${body.resource.title}》已入库（${body.chunkCount} 块）`)
+      toast.success(`《${body.resource.title}》已入库（${body.chunkCount} 块，未向量化）`)
     },
     onError: (e) => toast.error(`上传失败：${apiErrorMessage(e)}`),
   })
@@ -57,7 +56,7 @@ export function ResourceList({ wsId }: { wsId: string }) {
     onSuccess: (body) => {
       void queryClient.invalidateQueries({ queryKey: qk.resources(wsId) })
       reportIngest(body)
-      toast.success('已替换')
+      toast.success(`已替换（${body.chunkCount} 块，未向量化）`)
       setReplacing(null)
       setPendingFile(null)
     },
@@ -76,6 +75,17 @@ export function ResourceList({ wsId }: { wsId: string }) {
       setDeleting(null)
     },
     onError: (e) => toast.error(`删除失败：${apiErrorMessage(e)}`),
+  })
+
+  const embed = useMutation({
+    mutationFn: (rid: string) => resourceApi.embed(wsId, rid),
+    onSuccess: (body) => {
+      void queryClient.invalidateQueries({ queryKey: qk.resources(wsId) })
+      if (body.status === 'done') toast.success(`已向量化（${body.chunkCount} 块）`)
+      else if (body.status === 'partial') toast.warning(`部分向量化：${body.failedCount} 个块失败（仍可走全文通道）`)
+      else toast.error('向量化失败：全部块未生成向量')
+    },
+    onError: (e) => toast.error(`向量化失败：${apiErrorMessage(e)}`),
   })
 
   const busy = upload.isPending || replace.isPending
@@ -139,17 +149,31 @@ export function ResourceList({ wsId }: { wsId: string }) {
               key={r.id}
               className="flex items-start justify-between gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/40"
             >
-              <div className="min-w-0 space-y-1">
+              <div className="min-w-0 flex-1 space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{r.title}</span>
                   <Badge variant="outline">{kindLabel[r.kind]}</Badge>
+                  <VectorBadge status={r.embeddingStatus} />
                 </div>
                 <p className="text-sm text-muted-foreground">
                   {new Date(r.createdAt).toLocaleDateString()} · {r.charCount.toLocaleString()} 字 · {r.chunkCount} 块
-                  {r.embeddedCount < r.chunkCount ? ` · 向量 ${r.embeddedCount}/${r.chunkCount}` : ''}
+                  {r.embeddedCount > 0 ? ` · 向量 ${r.embeddedCount}/${r.chunkCount}` : ''}
                 </p>
               </div>
               <div className="flex shrink-0 gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={embed.isPending || busy}
+                  onClick={() => embed.mutate(r.id)}
+                >
+                  {embed.isPending && embed.variables === r.id ? (
+                    <Loader2 className="animate-spin" />
+                  ) : (
+                    <Sparkles />
+                  )}
+                  {embed.isPending && embed.variables === r.id ? '向量化中…' : '向量化'}
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -238,5 +262,19 @@ export function ResourceList({ wsId }: { wsId: string }) {
 
       <PasteDialog wsId={wsId} open={pasteOpen} onOpenChange={setPasteOpen} />
     </Card>
+  )
+}
+
+function VectorBadge({ status }: { status: ResourceSummary['embeddingStatus'] }) {
+  const map = {
+    pending: { label: '未向量化', variant: 'outline' as const },
+    partial: { label: '部分向量', variant: 'secondary' as const },
+    done: { label: '已向量化', variant: 'default' as const },
+  }
+  const { label, variant } = map[status]
+  return (
+    <Badge variant={variant} className="text-xs">
+      {label}
+    </Badge>
   )
 }

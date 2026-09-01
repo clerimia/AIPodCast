@@ -37,7 +37,7 @@ async function fixtureWorkspace(app: App, created: string[], name: string) {
 interface IngestResponse {
   resource: { id: string; title: string; kind: string; charCount: number }
   chunkCount: number
-  embedWarning: string | null
+  embeddingStatus: 'pending' | 'partial' | 'done'
   duplicateTitle: string | null
 }
 
@@ -65,15 +65,16 @@ test('列表：工作间未知 404；空工作间 []；粘贴摄入后含计数'
     const body = made.json() as IngestResponse
     assert.equal(body.resource.title, '量子入门')
     assert.equal(body.resource.kind, 'paste')
-    assert.equal(body.embedWarning, null)
+    assert.equal(body.embeddingStatus, 'pending') // 摄入与向量化解耦：ingest 永远 pending
     assert.equal(body.duplicateTitle, null)
 
     const list = await app.inject({ method: 'GET', url: `/api/workspaces/${ws.id}/resources` })
-    const rows = list.json() as { id: string; title: string; chunkCount: number; embeddedCount: number }[]
+    const rows = list.json() as { id: string; title: string; chunkCount: number; embeddedCount: number; embeddingStatus: string }[]
     assert.equal(rows.length, 1)
     assert.equal(rows[0]!.title, '量子入门')
     assert.equal(rows[0]!.chunkCount, body.chunkCount)
-    assert.equal(rows[0]!.embeddedCount, body.chunkCount) // stub 全成功 → 向量全覆盖
+    assert.equal(rows[0]!.embeddedCount, 0) // 摄入不 embed；embeddedCount 由后续 embedResource 填
+    assert.equal(rows[0]!.embeddingStatus, 'pending')
   } finally {
     await cleanup(app.db, created)
     await app.close()
@@ -178,12 +179,13 @@ test('重复摄入：同内容第二次命中 duplicateTitle（不阻断）', as
   }
 })
 
-test('embedding 全失败 → 201 + embedWarning + 向量覆盖 0（检索仍可走全文）', async () => {
-  const failing: Embedder = { async embed() { return null } }
-  const app = await buildApp({ embedder: failing })
+test('摄入不向量化：embeddingStatus=pending，embeddedCount=0；随后 embedResource 落向量', async () => {
+  // 摄入路径解耦 embed：ingest 后 status 都是 pending、嵌入列 NULL，无论 inject 什么 embedder。
+  // 真实向量化由 embedResource 端点触发（用 deterministicEmbedder 全成功）。
+  const app = await buildApp({ embedder: deterministicEmbedder })
   const created: string[] = []
   try {
-    const ws = await fixtureWorkspace(app, created, '降级工作间')
+    const ws = await fixtureWorkspace(app, created, '摄入解耦工作间')
     const made = await app.inject({
       method: 'POST',
       url: `/api/workspaces/${ws.id}/resources`,
@@ -191,12 +193,71 @@ test('embedding 全失败 → 201 + embedWarning + 向量覆盖 0（检索仍可
     })
     assert.equal(made.statusCode, 201)
     const body = made.json() as IngestResponse
-    assert.ok(body.embedWarning)
-    assert.ok(body.embedWarning!.includes('未生成向量'))
+    assert.equal(body.embeddingStatus, 'pending')
     const list = await app.inject({ method: 'GET', url: `/api/workspaces/${ws.id}/resources` })
-    const row = (list.json() as { embeddedCount: number; chunkCount: number }[])[0]!
+    const row = (list.json() as { id: string; embeddedCount: number; chunkCount: number; embeddingStatus: string }[])[0]!
     assert.equal(row.embeddedCount, 0)
     assert.equal(row.chunkCount, body.chunkCount)
+    assert.equal(row.embeddingStatus, 'pending')
+
+    // 用户点"向量化"：调用 embedResource 端点；本测试用 deterministicEmbedder（resources.test.ts 顶上定义）所以全成功
+    const emb = await app.inject({ method: 'POST', url: `/api/workspaces/${ws.id}/resources/${row.id}/embed` })
+    assert.equal(emb.statusCode, 200, `embed status=${emb.statusCode} body=${emb.body}`)
+    const embBody = emb.json() as { status: string; failedCount: number; chunkCount: number }
+    assert.equal(embBody.status, 'done')
+    assert.equal(embBody.failedCount, 0)
+
+    // 列表中该资源 status='done'、embeddedCount=chunkCount
+    const list2 = await app.inject({ method: 'GET', url: `/api/workspaces/${ws.id}/resources` })
+    const row2 = (list2.json() as { id: string; embeddedCount: number; chunkCount: number; embeddingStatus: string }[])[0]!
+    assert.equal(row2.embeddingStatus, 'done')
+    assert.equal(row2.embeddedCount, row2.chunkCount)
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+  }
+})
+
+test('embedResource：embedder 部分失败 → status=partial、failedCount 正确', async () => {
+  // 4 块：第一块成功（1024 维全 0.1）、第二块返 null、第三块成功、第四块返 null
+  const partial: Embedder = {
+    async embed(texts): Promise<number[][]> {
+      return texts.map((_, i) => (i % 2 === 0 ? new Array(1024).fill(0.1) : (null as unknown as number[])))
+    },
+  }
+  const app = await buildApp({ embedder: partial })
+  const created: string[] = []
+  try {
+    const ws = await fixtureWorkspace(app, created, '部分失败工作间')
+    // 切 4 块：用 4 个明显段落，markdown 感知切块会切出来
+    const text = '# 一\n\n第一段。\n\n# 二\n\n第二段。\n\n# 三\n\n第三段。\n\n# 四\n\n第四段。'
+    const made = await app.inject({
+      method: 'POST',
+      url: `/api/workspaces/${ws.id}/resources`,
+      payload: { title: '四段', text },
+    })
+    const { resource } = made.json() as IngestResponse
+    const emb = await app.inject({ method: 'POST', url: `/api/workspaces/${ws.id}/resources/${resource.id}/embed` })
+    const embBody = emb.json() as { status: string; failedCount: number; chunkCount: number }
+    assert.equal(embBody.status, 'partial')
+    assert.equal(embBody.failedCount, 2)
+    assert.equal(embBody.chunkCount, 4)
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+  }
+})
+
+test('embedResource：未知资源 → 404', async () => {
+  const app = await buildApp({ embedder: deterministicEmbedder })
+  const created: string[] = []
+  try {
+    const ws = await fixtureWorkspace(app, created, '未知工作间')
+    const emb = await app.inject({
+      method: 'POST',
+      url: `/api/workspaces/${ws.id}/resources/00000000-0000-4000-8000-000000000000/embed`,
+    })
+    assert.equal(emb.statusCode, 404)
   } finally {
     await cleanup(app.db, created)
     await app.close()
@@ -384,6 +445,30 @@ test('检索：工作间隔离——A 库的资料在 B 库查不到', async () 
   }
 })
 
+test('检索：mode=vector 只走向量通道——无向量块不召回', async () => {
+  // 验证 mode='vector' 时只走向量通道：BM25 通道不参与；embedding=NULL 的块天然不参与。
+  const app = await buildApp({ embedder: deterministicEmbedder })
+  const created: string[] = []
+  try {
+    const ws = await fixtureLibrary(app, created, '纯向量工作间')
+    // 库里有 chunks，但 ingest 路径不 embed → embedding=NULL
+    // vector 通道 SQL 过滤 c.embedding IS NOT NULL → 召回空
+    const beforeEmbed = await retrieve(app.db, ws.id, '火锅', { mode: 'vector', embedder: deterministicEmbedder })
+    assert.equal(beforeEmbed.status, 'no_hits')
+
+    // 给资源做一次 embed，再查 vector 模式就能命中
+    const list = await app.inject({ method: 'GET', url: `/api/workspaces/${ws.id}/resources` })
+    const { id } = (list.json() as { id: string }[])[0]!
+    await app.inject({ method: 'POST', url: `/api/workspaces/${ws.id}/resources/${id}/embed` })
+    const afterEmbed = await retrieve(app.db, ws.id, '火锅', { mode: 'vector', embedder: deterministicEmbedder })
+    assert.equal(afterEmbed.status, 'ok')
+    assert.ok(afterEmbed.hits[0]!.content.includes('涮羊肉'))
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+  }
+})
+
 test('retrieve 工具：形状、执行与跨工作间隔离', async () => {
   const { makeWriterTools } = await import('../src/modules/writer/tools.js')
   const app = await buildApp({ embedder: deterministicEmbedder })
@@ -425,6 +510,44 @@ test('retrieve 工具：形状、执行与跨工作间隔离', async () => {
       content: { text: string }[]
     })
     assert.ok(out2.content[0]!.text.includes('还没有资源'))
+  } finally {
+    await cleanup(app.db, created)
+    await app.close()
+  }
+})
+
+test('retrieve 工具面：mode=bm25 透传——embedder 绝不被调', async () => {
+  // 验证：写入侧参数 mode='bm25' 时 retrieve 工具面不调用 embedder；
+  // 工具面 schema 接受 mode 字段（不传则默认 hybrid）。
+  const { makeWriterTools } = await import('../src/modules/writer/tools.js')
+  const app = await buildApp({ embedder: deterministicEmbedder })
+  const created: string[] = []
+  try {
+    const ws = await fixtureLibrary(app, created, '工具 bm25 工作间')
+    const ep = (
+      (
+        await app.inject({
+          method: 'POST',
+          url: `/api/workspaces/${ws.id}/episodes`,
+          payload: { title: 'bm25 集' },
+        })
+      ).json() as { id: string }
+    )
+    const poisoned: Embedder = {
+      async embed() {
+        throw new Error('bm25 模式不应调用 embedder')
+      },
+    }
+    const tools = makeWriterTools(app.db, ep.id, { embedder: poisoned })
+    const retrieveTool = tools[3]!
+    const out = (await retrieveTool.execute(
+      'call-3',
+      { query: '火锅', mode: 'bm25' },
+      undefined,
+      undefined,
+      undefined as never,
+    ) as unknown as { content: { text: string }[] })
+    assert.ok(out.content[0]!.text.includes('《火锅指南》'))
   } finally {
     await cleanup(app.db, created)
     await app.close()

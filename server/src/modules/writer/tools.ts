@@ -333,14 +333,21 @@ export function makeWriterTools(db: Db, episodeId: string, opts: { embedder?: Em
     name: 'retrieve',
     label: '检索资源',
     description:
-      '检索本工作间的资源（知识库）。涉及事实、数据、背景、引用时先检索，用带出处的检索结果写稿。',
+      '检索本工作间的资源（知识库）。涉及事实、数据、背景、引用时先检索，用带出处的检索结果写稿。默认双通道；可按需指定 mode 强制单通道：专有名词/编号/型号（要纯 BM25，避免向量误伤）或近义改写（要纯向量，避免 BM25 漏召回）。',
     parameters: Type.Object({
       query: Type.String({ description: '检索关键词或问题' }),
+      mode: Type.Optional(
+        Type.Union([
+          Type.Literal('hybrid'),
+          Type.Literal('bm25'),
+          Type.Literal('vector'),
+        ], { description: '检索通道：hybrid=BM25+向量双通道（默认），bm25=纯全文，vector=纯语义' }),
+      ),
     }),
     execute: async (_toolCallId, params) => {
       const [ep] = await db.select({ wsId: episodes.wsId }).from(episodes).where(eq(episodes.id, episodeId))
       if (!ep) throw new AppError('NOT_FOUND', 'episode not found', 404)
-      const result = await retrieve(db, ep.wsId, params.query, { embedder: opts.embedder })
+      const result = await retrieve(db, ep.wsId, params.query, { embedder: opts.embedder, mode: params.mode })
       const text =
         result.status === 'empty_library'
           ? '本工作间还没有资源。请提示用户到「工作间设置 → 资源」上传资料后再检索。'

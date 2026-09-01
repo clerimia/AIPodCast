@@ -22,6 +22,20 @@ test('fuseRrf：空通道 → 空结果', () => {
   assert.deepEqual(fuseRrf([[]]), [])
 })
 
+test('fuseRrf：样本悬殊时等权归一——少样本通道不边缘化', () => {
+  // BM25 通道 20 块（资源大半无向量）；向量通道 2 块
+  // 不等权时向量 top-1（rank=0）= 1/61 ≈ 0.0164，会被 BM25 20 个块（最小 1/80 = 0.0125，但 top-1 = 1/61）按累加淹没
+  // 等权归一后：BM25 每块除以 20、向量每块除以 2。向量 top-1 = (1/61) * 0.5 = 0.00820
+  //                                              BM25 top-1 = (1/61) * 0.05 = 0.000820
+  // → 向量 top-1 在融合里就稳居第一（被抬升成"小通道的顶"）
+  const bm25 = Array.from({ length: 20 }, (_, i) => `bm${i}`)
+  const vector = ['vec0', 'vec1']
+  const fused = fuseRrf([bm25, vector])
+  // 向量通道唯一的 2 块必须出现在前 3（不被 BM25 20 块排挤）
+  assert.ok(fused.indexOf('vec0') < 3, `vec0 应该进 top-3，实际位置 ${fused.indexOf('vec0')}；结果=${fused.slice(0, 5)}`)
+  assert.ok(fused.indexOf('vec1') < 3, `vec1 应该进 top-3，实际位置 ${fused.indexOf('vec1')}`)
+})
+
 test('sanitizeQuery：剥掉 tantivy 语法字符，归一空白', () => {
   assert.equal(sanitizeQuery('量子 (计算) [技术]!'), '量子 计算 技术')
   assert.equal(sanitizeQuery('  a && b || c  '), 'a b c')

@@ -9,6 +9,18 @@ export const EMBED_MODEL = 'text-embedding-v4'
 export const EMBED_DIMENSIONS = 1024
 export const EMBED_BATCH_SIZE = 6
 
+/** Stub embedder：所有块的 embedding 一律 NULL。摄入用——让"切块+落库"与
+ *  "调 DashScope"解耦；状态自然进入 'pending'，等用户在前端点"向量化"再跑真
+ *  embed。永远返非 null 数组（每项都是 null），与 DashscopeEmbedder 失败时
+ *  返 null 区分开，便于 service 派生 embeddingStatus。 */
+export function makeNullEmbedder(): Embedder {
+  return {
+    async embed(texts): Promise<number[][]> {
+      return new Array(texts.length).fill(null) as number[][]
+    },
+  }
+}
+
 export interface Embedder {
   /** 返回与 texts 等长同序的向量；null = 本批失败（调用方降级） */
   embed(texts: string[]): Promise<number[][] | null>

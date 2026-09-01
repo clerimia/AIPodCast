@@ -25,18 +25,28 @@ export interface RetrieveResult {
 }
 
 export interface RetrieveOptions {
-  mode?: 'hybrid' | 'bm25'
+  /** 工具调用侧可选：
+   *  - 'hybrid'（默认；env.retrievalMode 兜底）：BM25 + 向量双通道
+   *  - 'bm25'：只走 BM25（专有名词精确命中；省 DashScope 额度）
+   *  - 'vector'：只走向量（语义检索；适合近义改写场景） */
+  mode?: 'hybrid' | 'bm25' | 'vector'
   /** 缺省现造（生产路径）；测试注入 stub */
   embedder?: Embedder
   resultLimit?: number
 }
 
-/** RRF 融合（纯函数）：通道 = 按相关性降序的 chunkId 列表；score = Σ 1/(60+rank)，rank 从 1 起 */
+/** RRF 融合（纯函数）：通道 = 按相关性降序的 chunkId 列表；score = Σ 1/(60+rank)。
+ *  等权归一（每通道贡献除以该通道命中数）：让"少样本的通道"不被"多样本的通道"
+ *  累加淹没（典型场景：库里 90% 资源没向量化，BM25 通道命中 20 块、向量通道只
+ *  命中 2 块时，等权归一前向量 top-1 会被 BM25 通道累加分挤到 top-5 之外；等权
+ *  归一后向量 top-1 稳居融合结果第 1/2 位）。空通道直接跳过、不贡献分数。 */
 export function fuseRrf(channels: string[][]): string[] {
   const score = new Map<string, number>()
   for (const channel of channels) {
+    if (channel.length === 0) continue
+    const norm = 1 / channel.length
     channel.forEach((id, i) => {
-      score.set(id, (score.get(id) ?? 0) + 1 / (RRF_K + i + 1))
+      score.set(id, (score.get(id) ?? 0) + 1 / (RRF_K + i + 1) * norm)
     })
   }
   return [...score.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id)
@@ -112,8 +122,11 @@ export async function retrieve(
   if (q === '') return { status: 'no_hits', hits: [] }
 
   const mode = opts.mode ?? env.retrievalMode
-  const channels: RetrievalHit[][] = [await bm25Channel(db, wsId, q, BM25_TOP_K)]
-  if (mode === 'hybrid') {
+  const channels: RetrievalHit[][] = []
+  if (mode === 'hybrid' || mode === 'bm25') {
+    channels.push(await bm25Channel(db, wsId, q, BM25_TOP_K))
+  }
+  if (mode === 'hybrid' || mode === 'vector') {
     const embedder = opts.embedder ?? makeDashscopeEmbedder()
     const vector = (await embedder.embed([query]))?.[0] ?? null
     if (vector !== null) {
